@@ -4,8 +4,10 @@ import {
   Bike,
   Box,
   CarFront,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Crosshair,
   FileJson,
   FolderOpen,
@@ -217,6 +219,7 @@ function App() {
   const [speedPopoverOpen, setSpeedPopoverOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [controlGuideOpen, setControlGuideOpen] = useState(true)
+  const [topControlsOpen, setTopControlsOpen] = useState(true)
   const overlayRef = useRef<SignalOverlay | null>(null)
   const [activeSceneKey, setActiveSceneKey] = useState<string | null>(null)
   // Auto: stages follow the scene's script. Manual: the G/B hotkeys override it (A returns to auto).
@@ -578,84 +581,105 @@ function App() {
       <section className="stage-wrap">
         <div className="stage" ref={stageRef}>
           <div className="hover-dot" ref={hoverDotRef} aria-hidden="true" />
-
-          <div className="brand-stack">
-            <div className="app-logo" aria-label="SDC">
-              <img src={logoUrl} alt="SDC" />
-            </div>
-
-            <div className={`guide-shell ${controlGuideOpen ? 'is-open' : 'is-closed'}`}>
-              <section className="control-guide" aria-label="Application controls" aria-hidden={!controlGuideOpen}>
-                <div className="guide-row">
-                  <Icon icon={MouseRight} />
-                  <span>Right click to Pan</span>
-                </div>
-                <div className="guide-row">
-                  <Icon icon={MouseLeft} />
-                  <span>Left click to Rotate</span>
-                </div>
-                <div className="guide-row">
-                  <Icon icon={ZoomIn} />
-                  <span>Scroll to Zoom</span>
-                </div>
-              </section>
-              <button
-                type="button"
-                className="guide-toggle"
-                aria-label={controlGuideOpen ? 'Hide controls guide' : 'Show controls guide'}
-                aria-expanded={controlGuideOpen}
-                onClick={() => setControlGuideOpen((value) => !value)}
-              >
-                <Icon icon={controlGuideOpen ? ChevronLeft : ChevronRight} />
-              </button>
-            </div>
-          </div>
-
-          <div className="scene-toolbar" aria-label="Scene controls">
-            {demoScenes.map((scene) => (
-              <button
-                type="button"
-                key={scene.key}
-                className={activeSceneKey === scene.key ? 'is-active' : undefined}
-                aria-pressed={activeSceneKey === scene.key}
-                title={`${scene.title} (${scene.hotkey})`}
-                onClick={() => handleDemoScene(scene)}
-              >
-                {scene.label}
-              </button>
-            ))}
-            <button type="button" onClick={() => setLoadDialogOpen(true)}>
-              <Icon icon={FolderOpen} />
-              Load JSON
-            </button>
-            <button type="button" onClick={recenterScene} disabled={!sceneData}>
-              Recenter
-            </button>
-            <label className="zoom-control">
-              <span>Zoom</span>
-              <input
-                type="range"
-                min="0.5"
-                max="2.5"
-                step="0.05"
-                value={zoom}
-                onChange={(event) => changeZoom(Number(event.target.value))}
-                disabled={!sceneData}
-              />
-            </label>
-          </div>
-
-          {activeScene && (
-            <section className={`stage-panel stage-${stage.index}`} aria-label="Demo stage" aria-live="polite">
-              <div className="stage-heading">
-                <span className="stage-index">{stage.index}</span>
-                <span>
-                  <strong>{stage.name}</strong>
-                  <small>{stage.detail}</small>
-                </span>
+          <div className="top-overlay">
+            <div className="top-left-box">
+              <div className="app-logo" aria-label="SDC">
+                <img src={logoUrl} alt="SDC" />
               </div>
-            </section>
-          )}
+              <div className={`guide-shell ${controlGuideOpen ? 'is-open' : 'is-closed'}`}>
+                <section className="control-guide" aria-label="Application controls" aria-hidden={!controlGuideOpen}>
+                  <div className="guide-row">
+                    <Icon icon={MouseRight} />
+                    <span>Right click to Pan</span>
+                  </div>
+                  <div className="guide-row">
+                    <Icon icon={MouseLeft} />
+                    <span>Left click to Rotate</span>
+                  </div>
+                  <div className="guide-row">
+                    <Icon icon={ZoomIn} />
+                    <span>Scroll to Zoom</span>
+                  </div>
+                </section>
+                <button
+                  type="button"
+                  className="guide-toggle"
+                  aria-label={controlGuideOpen ? 'Hide controls guide' : 'Show controls guide'}
+                  aria-expanded={controlGuideOpen}
+                  onClick={() => setControlGuideOpen((value) => !value)}
+                >
+                  {!controlGuideOpen && <span className="guide-toggle-label">Movement guide</span>}
+                  <Icon icon={controlGuideOpen ? ChevronLeft : ChevronRight} />
+                </button>
+              </div>
+            </div>
+
+            <div className={`top-right-box ${topControlsOpen ? 'is-open' : 'is-collapsed'}`}>
+              <button
+                type="button"
+                className="top-controls-toggle"
+                aria-label={topControlsOpen ? 'Collapse scene controls' : 'Expand scene controls'}
+                aria-expanded={topControlsOpen}
+                onClick={() => setTopControlsOpen((value) => !value)}
+              >
+                <span>Scene controls</span>
+                <Icon icon={topControlsOpen ? ChevronUp : ChevronDown} />
+              </button>
+              <div className="scene-toolbar" aria-label="Scene controls">
+                <label className="scene-picker">
+                  <Icon icon={FileJson} />
+                  <select
+                    value={activeSceneKey ?? ''}
+                    onChange={(event) => {
+                      const scene = demoScenes.find((item) => item.key === event.target.value)
+                      if (scene) handleDemoScene(scene)
+                    }}
+                    disabled={!sceneData}
+                    aria-label="Preloaded scenes"
+                  >
+                    {!activeSceneKey && <option value="">Custom scene</option>}
+                    {demoScenes.map((scene) => (
+                      <option key={scene.key} value={scene.key}>
+                        {scene.label} - {scene.title}
+                      </option>
+                    ))}
+                  </select>
+                  <Icon icon={ChevronDown} className="select-chevron" />
+                </label>
+                <button type="button" onClick={() => setLoadDialogOpen(true)}>
+                  <Icon icon={FolderOpen} />
+                  Load JSON
+                </button>
+                <button type="button" onClick={recenterScene} disabled={!sceneData}>
+                  Recenter
+                </button>
+                <label className="zoom-control">
+                  <span>Zoom</span>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="2.5"
+                    step="0.05"
+                    value={zoom}
+                    onChange={(event) => changeZoom(Number(event.target.value))}
+                    disabled={!sceneData}
+                  />
+                </label>
+              </div>
+
+              {activeScene && (
+                <section className={`stage-panel stage-${stage.index}`} aria-label="Demo stage" aria-live="polite">
+                  <div className="stage-heading">
+                    <span className="stage-index">{stage.index}</span>
+                    <span>
+                      <strong>{stage.name}</strong>
+                      <small>{stage.detail}</small>
+                    </span>
+                  </div>
+                </section>
+              )}
+            </div>
+          </div>
 
           <section className="agent-legend" aria-label="Agent color legend">
             {agentLegend.map((item) => (
