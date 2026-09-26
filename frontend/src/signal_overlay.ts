@@ -144,7 +144,7 @@ export class SignalOverlay {
     this.poleHeight = opts.poleHeight ?? 5.5
     // Badges keep a constant on-screen size (readable from any zoom) unless turned off.
     this.fixedSize = opts.fixedSize ?? true
-    this.badgeSize = opts.badgeSize ?? 0.13 // fraction of screen height when fixedSize
+    this.badgeSize = opts.badgeSize ?? 0.09 // fraction of screen height when fixedSize
     this.threshold = data.model?.threshold ?? 0.8
     // y-up internals -> z-up world: (x, h, -y) rotated +90deg about x becomes (x, y, h).
     if (opts.zUp) this.group.rotation.x = Math.PI / 2
@@ -282,8 +282,8 @@ export class SignalOverlay {
     root.add(head)
 
     const canvas = document.createElement('canvas')
-    canvas.width = 512
-    canvas.height = 256
+    canvas.width = 448
+    canvas.height = 192
     const tex = new THREE.CanvasTexture(canvas)
     tex.colorSpace = THREE.SRGBColorSpace
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -291,13 +291,13 @@ export class SignalOverlay {
     }))
     sprite.renderOrder = 40
     if (this.fixedSize) {
-      const h = this.badgeSize * (spec.kind === 'ego' ? 1.3 : 1)
-      sprite.scale.set(h * 2, h, 1)
+      const h = this.badgeSize * (spec.kind === 'ego' ? 1.15 : 1)
+      sprite.scale.set(h * (canvas.width / canvas.height), h, 1)
       sprite.center.set(0.5, 0) // sit on top of the signal head, not over it
     } else {
-      sprite.scale.set(4.2 * s, 2.1 * s, 1)
+      sprite.scale.set(3.7 * s, 1.6 * s, 1)
     }
-    sprite.position.y = head.position.y + (this.fixedSize ? 1.0 * s : 2.0 * s)
+    sprite.position.y = head.position.y + (this.fixedSize ? 0.72 * s : 1.65 * s)
     root.add(sprite)
 
     this.group.add(root)
@@ -336,19 +336,19 @@ export class SignalOverlay {
       : COLOR[st.phase] ?? COLOR.UNKNOWN
 
     ctx.clearRect(0, 0, W, H)
-    roundRect(ctx, 6, 6, W - 12, H - 12, 30)
+    roundRect(ctx, 6, 6, W - 12, H - 12, 22)
     ctx.fillStyle = 'rgba(24, 28, 33, 0.9)'
     ctx.fill()
-    ctx.lineWidth = ego ? 7 : 4
+    ctx.lineWidth = ego ? 6 : 3
     ctx.strokeStyle = accent
     ctx.stroke()
 
     // Confidence ring. Beacon = full blue ring (it isn't guessing).
-    const cx = 122
-    const cy = H / 2
-    const r = 80
+    const cx = 76
+    const cy = 78
+    const r = 43
     ctx.lineCap = 'round'
-    ctx.lineWidth = 16
+    ctx.lineWidth = 10
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)'
     ctx.beginPath()
     ctx.arc(cx, cy, r, 0, Math.PI * 2)
@@ -363,46 +363,49 @@ export class SignalOverlay {
     if (st.source !== 'BEACON') { // tick = commit threshold
       const a = -Math.PI / 2 + this.threshold * Math.PI * 2
       ctx.lineCap = 'butt'
-      ctx.lineWidth = 5
+      ctx.lineWidth = 4
       ctx.strokeStyle = COLOR.TEXT
       ctx.beginPath()
-      ctx.moveTo(cx + Math.cos(a) * (r - 15), cy + Math.sin(a) * (r - 15))
-      ctx.lineTo(cx + Math.cos(a) * (r + 15), cy + Math.sin(a) * (r + 15))
+      ctx.moveTo(cx + Math.cos(a) * (r - 10), cy + Math.sin(a) * (r - 10))
+      ctx.lineTo(cx + Math.cos(a) * (r + 10), cy + Math.sin(a) * (r + 10))
       ctx.stroke()
     }
     ctx.fillStyle = COLOR.TEXT
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.font = `600 46px ${this.font}`
-    ctx.fillText(st.source === 'BEACON' ? 'Live' : `${Math.round(st.conf * 100)}%`, cx, cy + 2)
+    ctx.font = `700 34px ${this.font}`
+    ctx.fillText(st.source === 'BEACON' ? 'Live' : `${Math.round(st.conf * 100)}%`, cx, cy + 1)
+    ctx.fillStyle = 'rgba(232, 235, 230, 0.68)'
+    ctx.font = `600 15px ${this.font}`
+    ctx.fillText(st.source === 'BEACON' ? 'beacon' : 'confidence', cx, 148)
 
     // Text column
-    const tx = 230
-    const maxW = W - tx - 26
+    const tx = 142
+    const maxW = W - tx - 24
     const f = this.font
     ctx.textAlign = 'left'
     ctx.textBaseline = 'alphabetic'
     ctx.fillStyle = 'rgba(232, 235, 230, 0.6)'
-    fitText(ctx, ego ? 'Your light' : DIR_NAME[L.spec.dir] ?? L.spec.dir, tx, 54, maxW, 30, 500, f)
+    fitText(ctx, ego ? 'Your light' : DIR_NAME[L.spec.dir] ?? L.spec.dir, tx, 42, maxW, 22, 500, f)
 
     ctx.fillStyle = accent
-    fitText(ctx, WORD[st.phase] ?? st.phase, tx, 112, maxW, 64, 700, f)
+    fitText(ctx, WORD[st.phase] ?? st.phase, tx, 88, maxW, 44, 700, f)
 
     ctx.fillStyle = COLOR.TEXT
     const src = st.source === 'BEACON' ? 'From beacon'
       : st.source === 'MODEL' ? 'Read from traffic'
       : st.guess && st.guess !== 'UNKNOWN' ? 'Model unsure' : 'No traffic to read'
-    fitText(ctx, src, tx, 156, maxW, 32, 500, f)
+    fitText(ctx, src, tx, 124, maxW, 24, 500, f)
 
     if (this.showTruth) {
       const known = KNOWN.has(st.truth)
       const mark = known && st.source !== 'FALLBACK' ? (st.phase === st.truth ? ' ✓' : ' ✗') : ''
       const label = known ? `Actual: ${WORD[st.truth].toLowerCase()}` : 'Actual: not visible to car'
       ctx.fillStyle = 'rgba(232, 235, 230, 0.6)'
-      const w = fitText(ctx, label, tx, 200, maxW - (mark ? 30 : 0), 30, 500, f)
+      const w = fitText(ctx, label, tx, 158, maxW - (mark ? 24 : 0), 22, 500, f)
       if (mark) {
         ctx.fillStyle = mark.includes('✓') ? COLOR.GO : COLOR.CAUTION
-        ctx.fillText(mark, tx + w, 200)
+        ctx.fillText(mark, tx + w, 158)
       }
     }
     L.tex.needsUpdate = true
