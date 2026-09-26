@@ -24,6 +24,8 @@ import scene55Url from '../../demo_data/scene_55.json?url'
 import scene116Url from '../../demo_data/scene_116.json?url'
 import scene117Url from '../../demo_data/scene_117.json?url'
 import './App.css'
+import { SignalOverlay } from './signal_overlay'
+import type { OverlaySceneData } from './signal_overlay'
 
 type Point = [number, number]
 type AgentState = [number, number, number] | null
@@ -47,6 +49,7 @@ type SceneData = {
   }
   signals: {
     lane_id: number
+    approach?: string
     stop: Point
     heading: number
   }[]
@@ -62,6 +65,10 @@ type SceneData = {
     approach: Record<string, string>[]
     lane: Record<string, string>[]
   }
+  // Added by predict_scene.py; absent in older scene files.
+  ego_lane?: number | null
+  ego_approach?: string | null
+  model?: OverlaySceneData['model']
 }
 
 type Bounds = {
@@ -128,7 +135,7 @@ const agentLegend = [
 const maxPolarAngle = (82 * Math.PI) / 180
 const minPolarAngle = (10 * Math.PI) / 180
 const sceneBackground = 0x101722
-const initialFocusZoom = 1.65
+const initialFocusZoom = 1.4
 const demoScenes = [
   { label: 'Scene 55', fileName: 'scene_55.json', url: scene55Url },
   { label: 'Scene 116', fileName: 'scene_116.json', url: scene116Url },
@@ -149,6 +156,10 @@ function App() {
   const [loopPlayback, setLoopPlayback] = useState(true)
   const [loading, setLoading] = useState(true)
   const [controlGuideOpen, setControlGuideOpen] = useState(true)
+  const overlayRef = useRef<SignalOverlay | null>(null)
+  const [overlayOn, setOverlayOn] = useState(false)
+  // Not wired to anything yet: will come from the BLE receiver / demo stage.
+  const [beaconAlive] = useState(false)
   const [loadDialogOpen, setLoadDialogOpen] = useState(false)
 
   const bounds = useMemo(() => (sceneData ? getBounds(sceneData) : null), [sceneData])
@@ -195,7 +206,7 @@ function App() {
 
   useEffect(() => {
     queueMicrotask(() => {
-      void loadScene('/scene.json', 'Sample scene loaded')
+      void loadScene(scene116Url, 'Demo scene 116 loaded')
     })
   }, [loadScene])
 
@@ -282,15 +293,16 @@ function App() {
       renderer.setSize(rect.width, rect.height, false)
     }
 
-    const animate = () => {
+    const animate = (now: number) => {
       controls.update()
+      overlayRef.current?.animate(now)
       updateHoverDot(hoverDotRef.current, stage, camera, refs.hoveredAgent)
       renderer.render(threeScene, camera)
       refs.frameId = window.requestAnimationFrame(animate)
     }
 
     resize()
-    animate()
+    animate(performance.now())
     window.addEventListener('resize', resize)
     renderer.domElement.addEventListener('pointermove', updateHover)
     renderer.domElement.addEventListener('pointerleave', clearHover)
@@ -329,6 +341,25 @@ function App() {
       applyCameraZoom(camera, zoomRef.current)
     }
   }, [sceneData, bounds])
+
+  // One overlay per scene; rebuilt when a new scene loads.
+  useEffect(() => {
+    if (!threeRef.current || !sceneData) return
+    const overlay = new SignalOverlay(threeRef.current.scene, sceneData, { zUp: true })
+    overlayRef.current = overlay
+    return () => {
+      overlay.dispose()
+      if (overlayRef.current === overlay) overlayRef.current = null
+    }
+  }, [sceneData])
+
+  useEffect(() => {
+    overlayRef.current?.setVisible(overlayOn)
+  }, [sceneData, overlayOn])
+
+  useEffect(() => {
+    overlayRef.current?.update(step, beaconAlive)
+  }, [sceneData, step, beaconAlive])
 
   useEffect(() => {
     if (!threeRef.current || !sceneData) return
@@ -445,6 +476,15 @@ function App() {
             </button>
             <button type="button" onClick={recenterScene} disabled={!sceneData}>
               Recenter
+            </button>
+            <button
+              type="button"
+              className={overlayOn ? 'is-active' : undefined}
+              aria-pressed={overlayOn}
+              onClick={() => setOverlayOn((value) => !value)}
+              disabled={!sceneData}
+            >
+              Overlay {overlayOn ? 'On' : 'Off'}
             </button>
             <label className="zoom-control">
               <span>Zoom</span>
@@ -801,10 +841,11 @@ function focusSdcCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls
   const [x, y, heading] = state
   const center = new THREE.Vector3(x, y, 0)
   const distance = 34
+  // Straight behind the car along its heading, looking forward over its roof.
   camera.position.set(
-    x - Math.cos(heading) * distance * 0.55 - Math.sin(heading) * distance * 0.46,
-    y - Math.sin(heading) * distance * 0.55 + Math.cos(heading) * distance * 0.46,
-    distance * 0.72,
+    x - Math.cos(heading) * distance * 0.9,
+    y - Math.sin(heading) * distance * 0.9,
+    distance * 0.4,
   )
   controls.target.copy(center)
   controls.update()

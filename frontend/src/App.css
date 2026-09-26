@@ -26,6 +26,12 @@ button:hover,
   background: #ffffff;
 }
 
+button.is-active {
+  border-color: #4aa8ff;
+  background: #4aa8ff;
+  color: #0b1320;
+}
+
 button:disabled,
 .file-button:has(input:disabled) {
   cursor: not-allowed;
