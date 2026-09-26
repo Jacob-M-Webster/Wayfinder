@@ -45,11 +45,13 @@ function App() {
   const threeRef = useRef<ThreeRefs | null>(null)
   const overlayRef = useRef<SignalOverlay | null>(null)
   const playTimerRef = useRef<number | null>(null)
+  const cameraLockedRef = useRef(true)
   const zoomRef = useRef(1)
 
   const [sceneData, setSceneData] = useState<SceneData | null>(null)
   const [step, setStep] = useState(0)
   const [playing, setPlaying] = useState(false)
+  const [cameraLocked, setCameraLocked] = useState(true)
   const [zoom, setZoom] = useState(1)
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
   const [loopPlayback, setLoopPlayback] = useState(true)
@@ -70,6 +72,38 @@ function App() {
   const beaconAlive = script ? sceneTime < script.beaconLostAt : manualStage.beaconAlive
   const ego = sceneData ? egoDecision(sceneData, step, beaconAlive) : null
   const stage = getStageInfo(gridUp, beaconAlive, ego?.source)
+  const timelineStates = useMemo(() => {
+    if (!sceneData) return []
+
+    const egoLane = sceneData.ego_lane ?? sceneData.model?.ego_lane ?? null
+    const egoAgent = sceneData.agents.find((agent) => agent.is_sdc)
+    const laneTruth = egoLane == null ? null : String(egoLane)
+
+    return Array.from({ length: sceneData.num_steps }, (_, index) => {
+      const phase = laneTruth ? sceneData.truth.lane[index]?.[laneTruth] : undefined
+      if (phase === 'STOP' || phase === 'ALL_WAY_STOP') return 'stop' as const
+      if (phase === 'GO') return 'go' as const
+
+      const state = egoAgent?.states[index]
+      const adjacentState = egoAgent?.states[index > 0 ? index - 1 : index + 1]
+      if (!state || !adjacentState) return null
+      const speed = Math.hypot(state[0] - adjacentState[0], state[1] - adjacentState[1]) * sceneData.hz
+      return speed > 0.2 ? 'go' as const : 'stop' as const
+    })
+  }, [sceneData])
+  const timelineGradient = useMemo(() => {
+    if (!timelineStates.length) return undefined
+    const colors = { stop: '#f25555', go: '#25c58a', unknown: '#687384' }
+    const stops: string[] = []
+    timelineStates.forEach((state, index) => {
+      const color = colors[state ?? 'unknown']
+      const start = (index / timelineStates.length) * 100
+      const end = ((index + 1) / timelineStates.length) * 100
+      stops.push(`${color} ${start}%`, `${color} ${end}%`)
+    })
+    return `linear-gradient(to right, ${stops.join(', ')})`
+  }, [timelineStates])
+  const currentTimelineState = timelineStates[step] ?? null
 
   const loadScene = useCallback(async (url: string, successMessage: string, sceneKey: string | null = null) => {
     try {
@@ -98,8 +132,14 @@ function App() {
     [beaconAlive, gridUp],
   )
 
+  const updateCameraLock = useCallback((locked: boolean) => {
+    cameraLockedRef.current = locked
+    setCameraLocked(locked)
+  }, [])
+
   const recenterScene = useCallback(() => {
     if (!threeRef.current || !bounds) return
+    updateCameraLock(true)
     if (sceneData && focusSdcCamera(threeRef.current.camera, threeRef.current.controls, sceneData, step)) {
       zoomRef.current = initialFocusZoom
       setZoom(initialFocusZoom)
@@ -111,7 +151,7 @@ function App() {
     zoomRef.current = 1
     setZoom(1)
     applyCameraZoom(threeRef.current.camera, 1)
-  }, [bounds, sceneData, step])
+  }, [bounds, sceneData, step, updateCameraLock])
 
   const changeZoom = useCallback((value: number) => {
     zoomRef.current = value
@@ -225,7 +265,7 @@ function App() {
           refs.followTarget.set(sdcBox.position.x, sdcBox.position.y, 0)
         }
       }
-      followCamera(camera, controls, refs.followTarget, dt)
+      if (cameraLockedRef.current) followCamera(camera, controls, refs.followTarget, dt)
       controls.update()
       overlayRef.current?.animate(now)
       overlayRef.current?.fitToView(camera, renderer.domElement.clientHeight)
@@ -422,20 +462,28 @@ function App() {
               <ControlGuide open={controlGuideOpen} onToggle={() => setControlGuideOpen((value) => !value)} />
             </div>
 
-            <div className={`top-right-box ${topControlsOpen ? 'is-open' : 'is-collapsed'}`}>
-              <SceneToolbar
-                activeSceneKey={activeSceneKey}
-                demoScenes={demoScenes}
-                sceneLoaded={Boolean(sceneData)}
-                topControlsOpen={topControlsOpen}
-                zoom={zoom}
-                onChangeScene={handleDemoScene}
-                onOpenLoadDialog={() => setLoadDialogOpen(true)}
-                onRecenter={recenterScene}
-                onToggleTopControls={() => setTopControlsOpen((value) => !value)}
-                onZoomChange={changeZoom}
-              />
-              {activeScene && <StagePanel stage={stage} />}
+            <div className="top-right-stack">
+              <div className={`top-right-box ${topControlsOpen ? 'is-open' : 'is-collapsed'}`}>
+                <SceneToolbar
+                  activeSceneKey={activeSceneKey}
+                  cameraLocked={cameraLocked}
+                  demoScenes={demoScenes}
+                  sceneLoaded={Boolean(sceneData)}
+                  topControlsOpen={topControlsOpen}
+                  zoom={zoom}
+                  onChangeScene={handleDemoScene}
+                  onCameraLockChange={updateCameraLock}
+                  onOpenLoadDialog={() => setLoadDialogOpen(true)}
+                  onRecenter={recenterScene}
+                  onToggleTopControls={() => setTopControlsOpen((value) => !value)}
+                  onZoomChange={changeZoom}
+                />
+              </div>
+              {activeScene && (
+                <div className="top-status-box">
+                  <StagePanel stage={stage} />
+                </div>
+              )}
             </div>
           </div>
 
@@ -452,6 +500,8 @@ function App() {
             timeLabel={timeLabel}
             totalTime={totalTime}
             frameLabel={frameLabel}
+            timelineGradient={timelineGradient}
+            currentTimelineState={currentTimelineState}
             onPlayPause={handlePlayPause}
             onStepChange={(nextStep) => {
               setPlaying(false)

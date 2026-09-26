@@ -4,15 +4,28 @@ import type { Bounds, Point, SceneData } from '../types/scene'
 import { agentColors, sceneBackground, signalColors } from './sceneConstants'
 import { angleDelta, circularMean, clamp, pointDistance, smoothstep } from './math'
 import type { AgentRender, DynamicSceneState, ThreeRefs } from './sceneTypes'
+import { makeVehicleGeometry } from './vehicleModels'
 
 type EdgeFade = Bounds & {
   fadeDistance: number
+}
+
+type RoadSurfaceFade = EdgeFade & {
+  centerX: number
+  centerY: number
+  roadFadeStart: number
+  roadFadeEnd: number
 }
 
 type SignalBarLayout = {
   stop: Point
   heading: number
 }
+
+const groundSurfaceColor = 0x17202e
+const roadSurfaceColor = 0x131b27
+const roadEdgeSurfaceColor = 0x141d29
+const roadSurfaceZ = 0.012
 
 export function preventMenu(event: MouseEvent) {
   event.preventDefault()
@@ -43,7 +56,7 @@ export function buildStaticScene(group: THREE.Group, sceneData: SceneData, bound
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(size, size),
     new THREE.MeshStandardMaterial({
-      color: 0x17202e,
+      color: groundSurfaceColor,
       alphaMap: makeGroundAlphaMap(),
       transparent: true,
       roughness: 0.86,
@@ -55,6 +68,7 @@ export function buildStaticScene(group: THREE.Group, sceneData: SceneData, bound
   group.add(ground)
 
   group.add(makeFadedGrid(centerX, centerY, size, Math.max(8, Math.floor(size / 20)), fade))
+  group.add(makeRoadSurface(sceneData, makeRoadSurfaceFade(fade, centerX, centerY, size)))
 
   sceneData.map.road_edges.forEach((edge) => {
     group.add(makeFadedLine(edge.points, 0x8b94a7, 0.85, 0.035, fade))
@@ -74,16 +88,10 @@ export function buildDynamicScene(group: THREE.Group, sceneData: SceneData): Dyn
   const agents = sceneData.agents.map((agent) => {
     const height = getAgentHeight(agent.type)
     const color = agent.is_sdc ? 0xffffff : agentColors[agent.type] ?? agentColors.other
-    const box = new THREE.Mesh(
-      new THREE.BoxGeometry(agent.length, agent.width, height),
-      new THREE.MeshStandardMaterial({
-        color,
-        roughness: 0.42,
-        metalness: agent.type === 'vehicle' ? 0.18 : 0.02,
-      }),
-    )
+    const box = makeAgentMesh(agent, color, height)
     box.visible = false
     box.castShadow = true
+    box.receiveShadow = agent.type === 'vehicle'
 
     const outline = new THREE.LineSegments(
       new THREE.EdgesGeometry(box.geometry, 18),
@@ -167,7 +175,7 @@ export function updateDynamicScene(
 
     headingIcon.position.set(x, y, height + 0.1)
     headingIcon.rotation.z = heading
-    headingIcon.visible = true
+    headingIcon.visible = agent.type !== 'vehicle'
 
     updateTrail(trail, agent, step, showTrails)
   })
@@ -342,6 +350,50 @@ function getAgentHeight(type: string) {
   return type === 'pedestrian' ? 1.65 : type === 'cyclist' ? 1.35 : 1.55
 }
 
+function makeAgentMesh(agent: SceneData['agents'][number], color: number, height: number) {
+  const geometry =
+    agent.type === 'vehicle'
+      ? makeVehicleGeometry(agent, height)
+      : new THREE.BoxGeometry(agent.length, agent.width, height)
+
+  return new THREE.Mesh(
+    geometry,
+    agent.type === 'vehicle'
+      ? makeVehicleMaterial(color)
+      : new THREE.MeshStandardMaterial({
+          color,
+          roughness: 0.42,
+          metalness: 0.02,
+        }),
+  )
+}
+
+function makeVehicleMaterial(color: number) {
+  const material = new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.62,
+    metalness: 0.04,
+    shadowSide: THREE.FrontSide,
+  })
+
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <opaque_fragment>',
+      `
+      float carEdgeFalloff = 1.0 - abs( dot( normalize( geometryNormal ), normalize( geometryViewDir ) ) );
+      float carSoftEdge = smoothstep( 0.08, 0.72, carEdgeFalloff );
+      vec3 carShadowLift = diffuseColor.rgb * 0.16 * carSoftEdge;
+      vec3 carRimBlend = diffuseColor.rgb * 0.1 * pow( carSoftEdge, 1.8 );
+      outgoingLight = mix( outgoingLight, outgoingLight + carShadowLift + carRimBlend, 0.75 );
+      #include <opaque_fragment>
+      `,
+    )
+  }
+  material.customProgramCacheKey = () => 'vehicle-soft-shadow-v1'
+
+  return material
+}
+
 function makeHeadingIcon(agent: SceneData['agents'][number]) {
   const length = Math.max(0.72, Math.min(1.25, agent.length * 0.24))
   const width = Math.max(0.42, Math.min(0.82, agent.width * 0.48))
@@ -404,6 +456,133 @@ function makeFadedPolygon(points: Point[], color: number, opacity: number, z: nu
   return mesh
 }
 
+function makeRoadSurface(sceneData: SceneData, fade: RoadSurfaceFade) {
+  const group = new THREE.Group()
+  group.renderOrder = 3
+
+  sceneData.map.road_edges.forEach((edge) => {
+    const closedSurface = makeClosedRoadSurface(edge.points, fade)
+    if (closedSurface) {
+      group.add(closedSurface)
+      return
+    }
+
+    const mesh = makeFadedRoadRibbon(edge.points, 2.6, roadEdgeSurfaceColor, fade)
+    if (mesh) group.add(mesh)
+  })
+
+  sceneData.map.lanes.forEach((lane) => {
+    const mesh = makeFadedRoadRibbon(lane.points, lane.controlled ? 7.2 : 6.4, roadSurfaceColor, fade)
+    if (mesh) group.add(mesh)
+  })
+
+  return group
+}
+
+function makeClosedRoadSurface(points: Point[], fade: RoadSurfaceFade) {
+  if (!isClosedPolyline(points)) return null
+  return makeFadedRoadPolygon(points, roadSurfaceColor, 0.58, fade)
+}
+
+function makeFadedRoadRibbon(points: Point[], width: number, color: number, fade: RoadSurfaceFade) {
+  if (points.length < 2) return null
+
+  const halfWidth = width / 2
+  const left: Point[] = []
+  const right: Point[] = []
+
+  points.forEach((point, index) => {
+    const previous = points[Math.max(0, index - 1)]
+    const next = points[Math.min(points.length - 1, index + 1)]
+    const tangentX = next[0] - previous[0]
+    const tangentY = next[1] - previous[1]
+    const length = Math.hypot(tangentX, tangentY) || 1
+    const normalX = -tangentY / length
+    const normalY = tangentX / length
+
+    left.push([point[0] + normalX * halfWidth, point[1] + normalY * halfWidth])
+    right.push([point[0] - normalX * halfWidth, point[1] - normalY * halfWidth])
+  })
+
+  const vertices: number[] = []
+  const colors: number[] = []
+  const indices: number[] = []
+
+  points.forEach((_, index) => {
+    const pair = [left[index], right[index]]
+    pair.forEach((point) => {
+      vertices.push(point[0], point[1], roadSurfaceZ)
+      colors.push(...makeFadedRoadColor(point, color, fade))
+    })
+  })
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const base = index * 2
+    indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2)
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
+
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.58,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+  )
+  mesh.renderOrder = 3
+  return mesh
+}
+
+function makeFadedRoadPolygon(points: Point[], color: number, opacity: number, fade: RoadSurfaceFade) {
+  if (points.length < 3) return null
+
+  const shape = new THREE.Shape(points.map(([x, y]) => new THREE.Vector2(x, y)))
+  const geometry = new THREE.ShapeGeometry(shape)
+  const colors: number[] = []
+  const position = geometry.getAttribute('position')
+  for (let index = 0; index < position.count; index += 1) {
+    colors.push(...makeFadedRoadColor([position.getX(index), position.getY(index)], color, fade))
+  }
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+  )
+  mesh.position.z = roadSurfaceZ
+  mesh.renderOrder = 3
+  return mesh
+}
+
+function isClosedPolyline(points: Point[]) {
+  if (points.length < 3) return false
+  return pointDistance(points[0], points[points.length - 1]) < 1
+}
+
+function makeRoadSurfaceFade(fade: EdgeFade, centerX: number, centerY: number, size: number): RoadSurfaceFade {
+  return {
+    ...fade,
+    centerX,
+    centerY,
+    roadFadeStart: size * 0.18,
+    roadFadeEnd: size * 0.46,
+  }
+}
+
 function makeFadedGrid(centerX: number, centerY: number, size: number, divisions: number, fade: EdgeFade) {
   const group = new THREE.Group()
   const startX = centerX - size / 2
@@ -425,6 +604,15 @@ function makeFadedGrid(centerX: number, centerY: number, size: number, divisions
 function makeFadedColor(point: Point, color: number, fade: EdgeFade) {
   const edgeAmount = getEdgeFadeAmount(point, fade)
   const mixedColor = new THREE.Color(sceneBackground).lerp(new THREE.Color(color), edgeAmount)
+  return [mixedColor.r, mixedColor.g, mixedColor.b]
+}
+
+function makeFadedRoadColor(point: Point, color: number, fade: RoadSurfaceFade) {
+  const edgeAmount = getEdgeFadeAmount(point, fade)
+  const distanceFromCenter = pointDistance(point, [fade.centerX, fade.centerY])
+  const centerAmount = 1 - smoothstep(fade.roadFadeStart, fade.roadFadeEnd, distanceFromCenter)
+  const roadAmount = edgeAmount * centerAmount
+  const mixedColor = new THREE.Color(groundSurfaceColor).lerp(new THREE.Color(color), roadAmount)
   return [mixedColor.r, mixedColor.g, mixedColor.b]
 }
 

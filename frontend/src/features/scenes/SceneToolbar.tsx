@@ -1,14 +1,16 @@
-import { ChevronDown, ChevronUp, FileJson, FolderOpen } from 'lucide'
+import { ChevronDown, ChevronUp, FileJson, FolderOpen, Lock, Unlock } from 'lucide'
 import { Icon } from '../../components/Icon'
 import type { DemoScene } from './demoScenes'
 
 type SceneToolbarProps = {
   activeSceneKey: string | null
+  cameraLocked: boolean
   demoScenes: DemoScene[]
   sceneLoaded: boolean
   topControlsOpen: boolean
   zoom: number
   onChangeScene: (scene: DemoScene) => void
+  onCameraLockChange: (locked: boolean) => void
   onOpenLoadDialog: () => void
   onRecenter: () => void
   onToggleTopControls: () => void
@@ -17,16 +19,21 @@ type SceneToolbarProps = {
 
 export function SceneToolbar({
   activeSceneKey,
+  cameraLocked,
   demoScenes,
   sceneLoaded,
   topControlsOpen,
   zoom,
   onChangeScene,
+  onCameraLockChange,
   onOpenLoadDialog,
   onRecenter,
   onToggleTopControls,
   onZoomChange,
 }: SceneToolbarProps) {
+  const activeScene = demoScenes.find((scene) => scene.key === activeSceneKey)
+  const scenePickerLabel = activeScene ? `${activeScene.label} - ${activeScene.title}` : 'Custom scene'
+
   return (
     <>
       <button
@@ -42,6 +49,7 @@ export function SceneToolbar({
       <div className="scene-toolbar" aria-label="Scene controls">
         <label className="scene-picker">
           <Icon icon={FileJson} />
+          <span className="scene-picker-value">{scenePickerLabel}</span>
           <select
             value={activeSceneKey ?? ''}
             onChange={(event) => {
@@ -64,9 +72,24 @@ export function SceneToolbar({
           <Icon icon={FolderOpen} />
           Load JSON
         </button>
-        <button type="button" onClick={onRecenter} disabled={!sceneLoaded}>
-          Recenter
-        </button>
+        <div className="camera-actions">
+          <button type="button" onClick={onRecenter} disabled={!sceneLoaded}>
+            Recenter
+          </button>
+          <button
+            type="button"
+            className="camera-lock-toggle"
+            onClick={() => onCameraLockChange(!cameraLocked)}
+            disabled={!sceneLoaded}
+            aria-pressed={cameraLocked}
+            aria-label={cameraLocked ? 'Turn camera lock off' : 'Turn camera lock on'}
+            title={cameraLocked ? 'Camera follows the central Waymo car' : 'Camera remains free'}
+          >
+            <Icon icon={cameraLocked ? Lock : Unlock} />
+            <span>Camera</span>
+            <span className="camera-lock-state">{cameraLocked ? 'On' : 'Off'}</span>
+          </button>
+        </div>
         <label className="zoom-control">
           <span>Zoom</span>
           <input
