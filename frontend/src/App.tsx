@@ -25,11 +25,11 @@ import type { IconNode } from 'lucide'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import scene55Url from '../../demo_data/scene_55.json?url'
-import scene116Url from '../../demo_data/scene_116.json?url'
-import scene117Url from '../../demo_data/scene_117.json?url'
 import logoUrl from './assets/logo.png'
+import scene20s19Url from '../../demo_data/scene_20s_19.json?url'
+import scene20s2Url from '../../demo_data/scene_20s_2.json?url'
 import './App.css'
-import { SignalOverlay } from './signal_overlay'
+import { SignalOverlay, egoDecision } from './signal_overlay'
 import type { OverlaySceneData } from './signal_overlay'
 
 type Point = [number, number]
@@ -103,6 +103,11 @@ type ThreeRefs = {
   raycaster: THREE.Raycaster
   pointer: THREE.Vector2
   hoveredAgent: AgentRender | null
+  // Where the camera should be looking (the Waymo car); the render loop glides toward it.
+  followTarget: THREE.Vector3 | null
+  // Playback clock, so the render loop can interpolate agents between 10 Hz scene steps.
+  clock: { step: number; stepAt: number; stepMs: number; playing: boolean }
+  lastFrame: number
   frameId: number
 }
 
@@ -116,6 +121,7 @@ type AgentRender = {
 
 type DynamicSceneState = {
   agents: AgentRender[]
+  sdc: AgentRender | null
   signals: SignalRender[]
   signalMaterials: THREE.MeshStandardMaterial[]
 }
@@ -133,6 +139,7 @@ const signalColors: Record<string, number> = {
   GO: 0x43d17a,
   UNKNOWN: 0x8a94a8,
   NONE: 0x3b4252,
+  DARK: 0x232a35,
 }
 
 const agentColors: Record<string, number> = {
@@ -153,12 +160,47 @@ const agentLegend = [
 const maxPolarAngle = (82 * Math.PI) / 180
 const minPolarAngle = (10 * Math.PI) / 180
 const sceneBackground = 0x101722
-const initialFocusZoom = 1.4
-const demoScenes = [
-  { label: 'Scene 55', fileName: 'scene_55.json', url: scene55Url },
-  { label: 'Scene 116', fileName: 'scene_116.json', url: scene116Url },
-  { label: 'Scene 117', fileName: 'scene_117.json', url: scene117Url },
+const initialFocusZoom = 0.65
+// Stage script, in seconds of scene time. Before gridDownAt: Normal. Then Grid down (beacon on
+// battery). From beaconLostAt: the car relies on the model, or falls back to an all-way stop.
+type StageScript = { gridDownAt: number; beaconLostAt: number }
+
+type DemoScene = {
+  key: string
+  hotkey: string
+  label: string
+  title: string
+  fileName: string
+  url: string
+  script: StageScript
+}
+
+// B: grid already down at t=0; the battery beacon carries the car through its light change.
+// C, D: the model layer. Grid and beacon are already down at t=0, so the car's decision comes
+// from the model or the all-way-stop fallback throughout (see CLAUDE.md, Demo).
+const demoScenes: DemoScene[] = [
+  {
+    key: 'B', hotkey: '2', label: 'Scene B', title: 'Beacon guidance', fileName: 'scene_20s_2.json',
+    url: scene20s2Url, script: { gridDownAt: 0, beaconLostAt: Infinity },
+  },
+  {
+    key: 'C', hotkey: '3', label: 'Scene C', title: 'Model inference', fileName: 'scene_20s_19.json',
+    url: scene20s19Url, script: { gridDownAt: 0, beaconLostAt: 0 },
+  },
+  {
+    key: 'D', hotkey: '4', label: 'Scene D', title: 'Safe fallback', fileName: 'scene_55.json',
+    url: scene55Url, script: { gridDownAt: 0, beaconLostAt: 0 },
+  },
 ]
+
+type StageFlags = { gridUp: boolean; beaconAlive: boolean }
+
+function stageInfo(gridUp: boolean, beaconAlive: boolean, egoSource: string | undefined) {
+  if (gridUp) return { index: 1, name: 'Normal', detail: 'Signals powered' }
+  if (beaconAlive) return { index: 2, name: 'Grid down', detail: 'Signals not powered, beacon transmitting' }
+  if (egoSource === 'MODEL') return { index: 3, name: 'Beacon lost', detail: 'Model reading traffic' }
+  return { index: 4, name: 'Safe fallback', detail: 'All-way stop' }
+}
 
 function App() {
   const stageRef = useRef<HTMLDivElement | null>(null)
@@ -176,20 +218,40 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [controlGuideOpen, setControlGuideOpen] = useState(true)
   const overlayRef = useRef<SignalOverlay | null>(null)
-  const [overlayOn, setOverlayOn] = useState(false)
-  // Not wired to anything yet: will come from the BLE receiver / demo stage.
-  const [beaconAlive] = useState(false)
+  const [activeSceneKey, setActiveSceneKey] = useState<string | null>(null)
+  // Auto: stages follow the scene's script. Manual: the G/B hotkeys override it (A returns to auto).
+  // beaconAlive will later also come from the BLE receiver.
+  const [autoStage, setAutoStage] = useState(true)
+  const [manualStage, setManualStage] = useState<StageFlags>({ gridUp: true, beaconAlive: true })
   const [loadDialogOpen, setLoadDialogOpen] = useState(false)
 
   const bounds = useMemo(() => (sceneData ? getBounds(sceneData) : null), [sceneData])
 
-  const loadScene = useCallback(async (url: string, successMessage: string) => {
+  const activeScene = demoScenes.find((scene) => scene.key === activeSceneKey) ?? null
+  const sceneTime = sceneData ? step / sceneData.hz : 0
+  const script = autoStage ? activeScene?.script : undefined
+  const gridUp = script ? sceneTime < script.gridDownAt : manualStage.gridUp
+  const beaconAlive = script ? sceneTime < script.beaconLostAt : manualStage.beaconAlive
+  // The overlay is only for the demo scenes, and is on for their whole run.
+  const overlayVisible = activeScene != null
+  const ego = sceneData ? egoDecision(sceneData, step, beaconAlive) : null
+  const stage = stageInfo(gridUp, beaconAlive, ego?.source)
+
+  // Any manual toggle freezes the current stage and switches off the script.
+  const overrideStage = (patch: Partial<StageFlags>) => {
+    setManualStage({ gridUp, beaconAlive, ...patch })
+    setAutoStage(false)
+  }
+
+  const loadScene = useCallback(async (url: string, successMessage: string, sceneKey: string | null = null) => {
     try {
       setLoading(true)
       const response = await fetch(url)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const data = (await response.json()) as SceneData
       setSceneData(data)
+      setActiveSceneKey(sceneKey)
+      setAutoStage(true)
       setStep(0)
       setPlaying(false)
       console.info(successMessage)
@@ -202,7 +264,7 @@ function App() {
 
   const recenterScene = useCallback(() => {
     if (!threeRef.current || !bounds) return
-    if (sceneData && focusSdcCamera(threeRef.current.camera, threeRef.current.controls, sceneData, 0)) {
+    if (sceneData && focusSdcCamera(threeRef.current.camera, threeRef.current.controls, sceneData, step)) {
       zoomRef.current = initialFocusZoom
       setZoom(initialFocusZoom)
       applyCameraZoom(threeRef.current.camera, initialFocusZoom)
@@ -213,7 +275,7 @@ function App() {
     zoomRef.current = 1
     setZoom(1)
     applyCameraZoom(threeRef.current.camera, 1)
-  }, [bounds, sceneData])
+  }, [bounds, sceneData, step])
 
   const changeZoom = useCallback((value: number) => {
     zoomRef.current = value
@@ -225,7 +287,7 @@ function App() {
 
   useEffect(() => {
     queueMicrotask(() => {
-      void loadScene(scene116Url, 'Demo scene 116 loaded')
+      void loadScene(demoScenes[0].url, `${demoScenes[0].fileName} loaded`, demoScenes[0].key)
     })
   }, [loadScene])
 
@@ -284,6 +346,9 @@ function App() {
       raycaster: new THREE.Raycaster(),
       pointer: new THREE.Vector2(),
       hoveredAgent: null,
+      followTarget: null,
+      clock: { step: 0, stepAt: 0, stepMs: 100, playing: false },
+      lastFrame: 0,
       frameId: 0,
     }
     threeRef.current = refs
@@ -313,8 +378,22 @@ function App() {
     }
 
     const animate = (now: number) => {
+      const dt = refs.lastFrame ? Math.min(0.1, (now - refs.lastFrame) / 1000) : 0
+      refs.lastFrame = now
+      if (refs.dynamicState) {
+        const { clock } = refs
+        const frac = clock.playing ? THREE.MathUtils.clamp((now - clock.stepAt) / clock.stepMs, 0, 1) : 0
+        interpolateAgents(refs.dynamicState, clock.step, frac)
+        const sdcBox = refs.dynamicState.sdc?.box
+        if (sdcBox?.visible) {
+          refs.followTarget ??= new THREE.Vector3()
+          refs.followTarget.set(sdcBox.position.x, sdcBox.position.y, 0)
+        }
+      }
+      followCamera(camera, controls, refs.followTarget, dt)
       controls.update()
       overlayRef.current?.animate(now)
+      overlayRef.current?.fitToView(camera, renderer.domElement.clientHeight)
       updateHoverDot(hoverDotRef.current, stage, camera, refs.hoveredAgent)
       updateSignalFlashes(refs.dynamicState?.signalMaterials ?? [], performance.now())
       renderer.render(threeScene, camera)
@@ -351,6 +430,7 @@ function App() {
     clearHoveredAgent(threeRef.current)
     buildStaticScene(staticGroup, sceneData, bounds)
     threeRef.current.dynamicState = buildDynamicScene(dynamicGroup, sceneData)
+    threeRef.current.followTarget = null
     updateDynamicScene(threeRef.current.dynamicState, sceneData, 0, true)
     if (focusSdcCamera(camera, controls, sceneData, 0)) {
       zoomRef.current = initialFocusZoom
@@ -361,6 +441,18 @@ function App() {
       applyCameraZoom(camera, zoomRef.current)
     }
   }, [sceneData, bounds])
+
+  // Mark when each step started; the render loop interpolates toward the next step from there.
+  // The camera follows the interpolated Waymo car (see animate).
+  useEffect(() => {
+    if (!threeRef.current || !sceneData) return
+    threeRef.current.clock = {
+      step,
+      stepAt: performance.now(),
+      stepMs: 1000 / (sceneData.hz * playbackSpeed),
+      playing,
+    }
+  }, [sceneData, step, playing, playbackSpeed])
 
   // One overlay per scene; rebuilt when a new scene loads.
   useEffect(() => {
@@ -374,8 +466,8 @@ function App() {
   }, [sceneData])
 
   useEffect(() => {
-    overlayRef.current?.setVisible(overlayOn)
-  }, [sceneData, overlayOn])
+    overlayRef.current?.setVisible(overlayVisible)
+  }, [sceneData, overlayVisible])
 
   useEffect(() => {
     overlayRef.current?.update(step, beaconAlive)
@@ -383,8 +475,8 @@ function App() {
 
   useEffect(() => {
     if (!threeRef.current || !sceneData) return
-    updateDynamicScene(threeRef.current.dynamicState, sceneData, step, !playing)
-  }, [sceneData, step, playing])
+    updateDynamicScene(threeRef.current.dynamicState, sceneData, step, !playing, gridUp)
+  }, [sceneData, step, playing, gridUp])
 
   useEffect(() => {
     if (!playing || !sceneData) return
@@ -419,6 +511,29 @@ function App() {
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [loadDialogOpen])
 
+  // Demo hotkeys (backup in case BLE flakes): 2/3/4 scenes (B/C/D), G grid, B beacon,
+  // A back to the scripted stages, Space play/pause.
+  useEffect(() => {
+    if (loadDialogOpen) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      const key = event.key.toLowerCase()
+      const scene = demoScenes.find((s) => s.hotkey === key)
+      if (scene) void loadScene(scene.url, `${scene.fileName} loaded`, scene.key)
+      else if (key === 'g') overrideStage({ gridUp: !gridUp })
+      else if (key === 'b') overrideStage({ beaconAlive: !beaconAlive })
+      else if (key === 'a') setAutoStage(true)
+      else if (key === ' ') {
+        event.preventDefault()
+        if (sceneData) setPlaying((value) => !value)
+      } else return
+      // Keep a focused slider/button from also reacting to the key.
+      ;(document.activeElement as HTMLElement | null)?.blur()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
   function handleFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return
@@ -429,6 +544,7 @@ function App() {
       try {
         const data = JSON.parse(String(reader.result)) as SceneData
         setSceneData(data)
+        setActiveSceneKey(null)
         setStep(0)
         setPlaying(false)
         setLoadDialogOpen(false)
@@ -448,9 +564,9 @@ function App() {
     reader.readAsText(file)
   }
 
-  function handleDemoScene(url: string, fileName: string) {
+  function handleDemoScene(scene: DemoScene) {
     setLoadDialogOpen(false)
-    void loadScene(url, `${fileName} loaded`)
+    void loadScene(scene.url, `${scene.fileName} loaded`, scene.key)
   }
 
   const timeLabel = sceneData ? `${(step / sceneData.hz).toFixed(1)}s` : '0.0s'
@@ -496,21 +612,24 @@ function App() {
           </div>
 
           <div className="scene-toolbar" aria-label="Scene controls">
+            {demoScenes.map((scene) => (
+              <button
+                type="button"
+                key={scene.key}
+                className={activeSceneKey === scene.key ? 'is-active' : undefined}
+                aria-pressed={activeSceneKey === scene.key}
+                title={`${scene.title} (${scene.hotkey})`}
+                onClick={() => handleDemoScene(scene)}
+              >
+                {scene.label}
+              </button>
+            ))}
             <button type="button" onClick={() => setLoadDialogOpen(true)}>
               <Icon icon={FolderOpen} />
               Load JSON
             </button>
             <button type="button" onClick={recenterScene} disabled={!sceneData}>
               Recenter
-            </button>
-            <button
-              type="button"
-              className={overlayOn ? 'is-active' : undefined}
-              aria-pressed={overlayOn}
-              onClick={() => setOverlayOn((value) => !value)}
-              disabled={!sceneData}
-            >
-              Overlay {overlayOn ? 'On' : 'Off'}
             </button>
             <label className="zoom-control">
               <span>Zoom</span>
@@ -525,6 +644,18 @@ function App() {
               />
             </label>
           </div>
+
+          {activeScene && (
+            <section className={`stage-panel stage-${stage.index}`} aria-label="Demo stage" aria-live="polite">
+              <div className="stage-heading">
+                <span className="stage-index">{stage.index}</span>
+                <span>
+                  <strong>{stage.name}</strong>
+                  <small>{stage.detail}</small>
+                </span>
+              </div>
+            </section>
+          )}
 
           <section className="agent-legend" aria-label="Agent color legend">
             {agentLegend.map((item) => (
@@ -653,11 +784,11 @@ function App() {
                           type="button"
                           className="demo-scene-button"
                           key={scene.fileName}
-                          onClick={() => handleDemoScene(scene.url, scene.fileName)}
+                          onClick={() => handleDemoScene(scene)}
                         >
                           <Icon icon={FileJson} />
                           <span>
-                            <strong>{scene.label}</strong>
+                            <strong>{scene.label} · {scene.title}</strong>
                             <small>{scene.fileName}</small>
                           </span>
                         </button>
@@ -800,10 +931,21 @@ function buildDynamicScene(group: THREE.Group, sceneData: SceneData): DynamicSce
     }
   })
 
-  return { agents, signals, signalMaterials: signals.map((signal) => signal.flashMaterial) }
+  return {
+    agents,
+    sdc: agents.find(({ agent }) => agent.is_sdc) ?? null,
+    signals,
+    signalMaterials: signals.map((signal) => signal.flashMaterial),
+  }
 }
 
-function updateDynamicScene(state: DynamicSceneState | null, sceneData: SceneData, step: number, showTrails: boolean) {
+function updateDynamicScene(
+  state: DynamicSceneState | null,
+  sceneData: SceneData,
+  step: number,
+  showTrails: boolean,
+  gridUp = true,
+) {
   if (!state) return
   const truth = sceneData.truth.lane[step] ?? {}
 
@@ -831,7 +973,7 @@ function updateDynamicScene(state: DynamicSceneState | null, sceneData: SceneDat
   })
 
   state.signals.forEach((signal) => {
-    const signalState = truth[String(signal.laneId)] ?? 'UNKNOWN'
+    const signalState = gridUp ? truth[String(signal.laneId)] ?? 'UNKNOWN' : 'DARK'
     if (signal.state === signalState) return
 
     signal.state = signalState
@@ -897,6 +1039,36 @@ function fitCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls, bou
   controls.update()
 }
 
+// Place agents between `step` and `step + 1` (frac 0..1) so motion is smooth at the screen's
+// frame rate instead of jumping at the scene's 10 Hz. Trails stay step-based.
+function interpolateAgents(state: DynamicSceneState, step: number, frac: number) {
+  state.agents.forEach(({ agent, box, headingIcon }) => {
+    const a = agent.states[step]
+    if (!a || !box.visible) return
+    const b = frac > 0 ? agent.states[step + 1] : null
+    const [x, y, heading] = b
+      ? [a[0] + (b[0] - a[0]) * frac, a[1] + (b[1] - a[1]) * frac, a[2] + angleDelta(b[2], a[2]) * frac]
+      : a
+    box.position.x = x
+    box.position.y = y
+    box.rotation.z = heading
+    headingIcon.position.x = x
+    headingIcon.position.y = y
+    headingIcon.rotation.z = heading
+  })
+}
+
+// Move camera and orbit target together toward the follow point. The point moves smoothly
+// (interpolated car), so light smoothing only matters for scrubs and scene jumps.
+function followCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls, target: THREE.Vector3 | null, dt: number) {
+  if (!target || dt <= 0) return
+  const delta = target.clone().sub(controls.target)
+  if (delta.lengthSq() < 1e-6) return
+  delta.multiplyScalar(1 - Math.exp(-dt * 6))
+  controls.target.add(delta)
+  camera.position.add(delta)
+}
+
 function focusSdcCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls, sceneData: SceneData, step: number) {
   const sdc = sceneData.agents.find((agent) => agent.is_sdc)
   const state = sdc?.states[step] ?? sdc?.states.find((agentState): agentState is [number, number, number] => Boolean(agentState))
@@ -907,9 +1079,9 @@ function focusSdcCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls
   const distance = 34
   // Straight behind the car along its heading, looking forward over its roof.
   camera.position.set(
-    x - Math.cos(heading) * distance * 0.9,
-    y - Math.sin(heading) * distance * 0.9,
-    distance * 0.4,
+    x - Math.cos(heading) * distance * 0.84,
+    y - Math.sin(heading) * distance * 0.84,
+    distance * 0.54,
   )
   controls.target.copy(center)
   controls.update()
