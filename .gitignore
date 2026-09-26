@@ -33,6 +33,7 @@ CLAUDE.md
 
 *.log
 *.png
+!frontend/src/assets/logo.png
 !docs/**/*.png
 # Dependencies
 node_modules/
