@@ -1,9 +1,28 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent } from 'react'
-import { ChevronLeft, ChevronRight, LoaderCircle, MouseLeft, MouseRight, ZoomIn } from 'lucide'
+import type { CSSProperties, ChangeEvent } from 'react'
+import {
+  Bike,
+  Box,
+  CarFront,
+  ChevronLeft,
+  ChevronRight,
+  Crosshair,
+  FileJson,
+  FolderOpen,
+  Footprints,
+  LoaderCircle,
+  MouseLeft,
+  MouseRight,
+  Upload,
+  X,
+  ZoomIn,
+} from 'lucide'
 import type { IconNode } from 'lucide'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import scene55Url from '../../demo_data/scene_55.json?url'
+import scene116Url from '../../demo_data/scene_116.json?url'
+import scene117Url from '../../demo_data/scene_117.json?url'
 import './App.css'
 import { SignalOverlay } from './signal_overlay'
 import type { OverlaySceneData } from './signal_overlay'
@@ -59,6 +78,10 @@ type Bounds = {
   maxY: number
 }
 
+type EdgeFade = Bounds & {
+  fadeDistance: number
+}
+
 type ThreeRefs = {
   renderer: THREE.WebGLRenderer
   scene: THREE.Scene
@@ -66,7 +89,24 @@ type ThreeRefs = {
   controls: OrbitControls
   staticGroup: THREE.Group
   dynamicGroup: THREE.Group
+  dynamicState: DynamicSceneState | null
+  raycaster: THREE.Raycaster
+  pointer: THREE.Vector2
+  hoveredAgent: AgentRender | null
   frameId: number
+}
+
+type AgentRender = {
+  agent: SceneData['agents'][number]
+  box: THREE.Mesh
+  outline: THREE.LineSegments
+  headingIcon: THREE.Mesh
+  trail: THREE.Line
+}
+
+type DynamicSceneState = {
+  agents: AgentRender[]
+  signalGroup: THREE.Group
 }
 
 const signalColors: Record<string, number> = {
@@ -84,15 +124,30 @@ const agentColors: Record<string, number> = {
   other: 0xcfd6e3,
 }
 
+const agentLegend = [
+  { label: 'SDC', color: '#ffffff', icon: Crosshair },
+  { label: 'Vehicle', color: '#58c7f7', icon: CarFront },
+  { label: 'Pedestrian', color: '#f8b86a', icon: Footprints },
+  { label: 'Cyclist', color: '#c37df4', icon: Bike },
+  { label: 'Other', color: '#cfd6e3', icon: Box },
+]
+
 const maxPolarAngle = (82 * Math.PI) / 180
 const minPolarAngle = (10 * Math.PI) / 180
 const sceneBackground = 0x101722
 const initialFocusZoom = 1.4
+const demoScenes = [
+  { label: 'Scene 55', fileName: 'scene_55.json', url: scene55Url },
+  { label: 'Scene 116', fileName: 'scene_116.json', url: scene116Url },
+  { label: 'Scene 117', fileName: 'scene_117.json', url: scene117Url },
+]
 
 function App() {
   const stageRef = useRef<HTMLDivElement | null>(null)
+  const hoverDotRef = useRef<HTMLDivElement | null>(null)
   const threeRef = useRef<ThreeRefs | null>(null)
   const playTimerRef = useRef<number | null>(null)
+  const zoomRef = useRef(1)
   const [sceneData, setSceneData] = useState<SceneData | null>(null)
   const [step, setStep] = useState(0)
   const [playing, setPlaying] = useState(false)
@@ -105,6 +160,7 @@ function App() {
   const [overlayOn, setOverlayOn] = useState(false)
   // Not wired to anything yet: will come from the BLE receiver / demo stage.
   const [beaconAlive] = useState(false)
+  const [loadDialogOpen, setLoadDialogOpen] = useState(false)
 
   const bounds = useMemo(() => (sceneData ? getBounds(sceneData) : null), [sceneData])
 
@@ -128,17 +184,20 @@ function App() {
   const recenterScene = useCallback(() => {
     if (!threeRef.current || !bounds) return
     if (sceneData && focusSdcCamera(threeRef.current.camera, threeRef.current.controls, sceneData, 0)) {
+      zoomRef.current = initialFocusZoom
       setZoom(initialFocusZoom)
       applyCameraZoom(threeRef.current.camera, initialFocusZoom)
       return
     }
 
     fitCamera(threeRef.current.camera, threeRef.current.controls, bounds)
+    zoomRef.current = 1
     setZoom(1)
     applyCameraZoom(threeRef.current.camera, 1)
   }, [bounds, sceneData])
 
   const changeZoom = useCallback((value: number) => {
+    zoomRef.current = value
     setZoom(value)
     if (threeRef.current) {
       applyCameraZoom(threeRef.current.camera, value)
@@ -147,7 +206,7 @@ function App() {
 
   useEffect(() => {
     queueMicrotask(() => {
-      void loadScene('/scenes/scene_116.json', 'Demo scene 116 loaded')
+      void loadScene(scene116Url, 'Demo scene 116 loaded')
     })
   }, [loadScene])
 
@@ -202,9 +261,30 @@ function App() {
       controls,
       staticGroup,
       dynamicGroup,
+      dynamicState: null,
+      raycaster: new THREE.Raycaster(),
+      pointer: new THREE.Vector2(),
+      hoveredAgent: null,
       frameId: 0,
     }
     threeRef.current = refs
+
+    const updateHover = (event: PointerEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect()
+      refs.pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -(((event.clientY - rect.top) / rect.height) * 2 - 1))
+      refs.raycaster.setFromCamera(refs.pointer, camera)
+
+      const hoverables = refs.dynamicState?.agents
+        .filter(({ agent, box }) => agent.type === 'vehicle' && !agent.is_sdc && box.visible)
+        .map(({ box }) => box) ?? []
+      const hit = refs.raycaster.intersectObjects(hoverables, false)[0]
+      setHoveredAgent(refs, hit?.object instanceof THREE.Mesh ? hit.object : null)
+    }
+
+    const clearHover = () => {
+      setHoveredAgent(refs, null)
+      hideHoverDot(hoverDotRef.current)
+    }
 
     const resize = () => {
       const rect = stage.getBoundingClientRect()
@@ -216,6 +296,7 @@ function App() {
     const animate = (now: number) => {
       controls.update()
       overlayRef.current?.animate(now)
+      updateHoverDot(hoverDotRef.current, stage, camera, refs.hoveredAgent)
       renderer.render(threeScene, camera)
       refs.frameId = window.requestAnimationFrame(animate)
     }
@@ -223,11 +304,16 @@ function App() {
     resize()
     animate(performance.now())
     window.addEventListener('resize', resize)
+    renderer.domElement.addEventListener('pointermove', updateHover)
+    renderer.domElement.addEventListener('pointerleave', clearHover)
 
     return () => {
       window.removeEventListener('resize', resize)
+      renderer.domElement.removeEventListener('pointermove', updateHover)
+      renderer.domElement.removeEventListener('pointerleave', clearHover)
       renderer.domElement.removeEventListener('contextmenu', preventMenu)
       window.cancelAnimationFrame(refs.frameId)
+      clearHover()
       controls.dispose()
       clearGroup(staticGroup)
       clearGroup(dynamicGroup)
@@ -239,15 +325,20 @@ function App() {
 
   useEffect(() => {
     if (!threeRef.current || !sceneData || !bounds) return
-    const { staticGroup, camera, controls } = threeRef.current
+    const { staticGroup, dynamicGroup, camera, controls } = threeRef.current
     clearGroup(staticGroup)
+    clearGroup(dynamicGroup)
+    clearHoveredAgent(threeRef.current)
     buildStaticScene(staticGroup, sceneData, bounds)
+    threeRef.current.dynamicState = buildDynamicScene(dynamicGroup, sceneData)
+    updateDynamicScene(threeRef.current.dynamicState, sceneData, 0, true)
     if (focusSdcCamera(camera, controls, sceneData, 0)) {
+      zoomRef.current = initialFocusZoom
       setZoom(initialFocusZoom)
       applyCameraZoom(camera, initialFocusZoom)
     } else {
       fitCamera(camera, controls, bounds)
-      applyCameraZoom(camera, zoom)
+      applyCameraZoom(camera, zoomRef.current)
     }
   }, [sceneData, bounds])
 
@@ -272,10 +363,8 @@ function App() {
 
   useEffect(() => {
     if (!threeRef.current || !sceneData) return
-    const { dynamicGroup } = threeRef.current
-    clearGroup(dynamicGroup)
-    buildDynamicScene(dynamicGroup, sceneData, step, true)
-  }, [sceneData, step])
+    updateDynamicScene(threeRef.current.dynamicState, sceneData, step, !playing)
+  }, [sceneData, step, playing])
 
   useEffect(() => {
     if (!playing || !sceneData) return
@@ -299,6 +388,17 @@ function App() {
     }
   }, [playing, sceneData, loopPlayback, playbackSpeed])
 
+  useEffect(() => {
+    if (!loadDialogOpen) return
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setLoadDialogOpen(false)
+    }
+
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [loadDialogOpen])
+
   function handleFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return
@@ -311,18 +411,26 @@ function App() {
         setSceneData(data)
         setStep(0)
         setPlaying(false)
+        setLoadDialogOpen(false)
         console.info(`${file.name} loaded`)
       } catch {
         console.error('That file is not valid scene JSON')
       } finally {
         setLoading(false)
+        event.target.value = ''
       }
     }
     reader.onerror = () => {
       console.error('Unable to read that file')
       setLoading(false)
+      event.target.value = ''
     }
     reader.readAsText(file)
+  }
+
+  function handleDemoScene(url: string, fileName: string) {
+    setLoadDialogOpen(false)
+    void loadScene(url, `${fileName} loaded`)
   }
 
   const timeLabel = sceneData ? `${(step / sceneData.hz).toFixed(1)}s` : '0.0s'
@@ -333,6 +441,8 @@ function App() {
     <main className="app-shell">
       <section className="stage-wrap">
         <div className="stage" ref={stageRef}>
+          <div className="hover-dot" ref={hoverDotRef} aria-hidden="true" />
+
           <div className={`guide-shell ${controlGuideOpen ? 'is-open' : 'is-closed'}`}>
             <section className="control-guide" aria-label="Application controls" aria-hidden={!controlGuideOpen}>
               <div className="guide-row">
@@ -360,10 +470,10 @@ function App() {
           </div>
 
           <div className="scene-toolbar" aria-label="Scene controls">
-            <label className="file-button">
-              <input type="file" accept=".json,application/json" onChange={handleFile} />
+            <button type="button" onClick={() => setLoadDialogOpen(true)}>
+              <Icon icon={FolderOpen} />
               Load JSON
-            </label>
+            </button>
             <button type="button" onClick={recenterScene} disabled={!sceneData}>
               Recenter
             </button>
@@ -389,6 +499,17 @@ function App() {
               />
             </label>
           </div>
+
+          <section className="agent-legend" aria-label="Agent color legend">
+            {agentLegend.map((item) => (
+              <div className="legend-item" key={item.label}>
+                <span className="legend-swatch" style={{ '--legend-color': item.color } as CSSProperties}>
+                  <Icon icon={item.icon} />
+                </span>
+                <span>{item.label}</span>
+              </div>
+            ))}
+          </section>
 
           <div className="controls" aria-label="Playback controls">
             <button
@@ -447,6 +568,61 @@ function App() {
               <span>Loading scene</span>
             </div>
           )}
+
+          {loadDialogOpen && (
+            <div
+              className="modal-backdrop"
+              role="presentation"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) setLoadDialogOpen(false)
+              }}
+            >
+              <section
+                className="load-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="load-dialog-title"
+              >
+                <header className="load-dialog-header">
+                  <h2 id="load-dialog-title">Load JSON</h2>
+                  <button type="button" className="icon-button" aria-label="Close" onClick={() => setLoadDialogOpen(false)}>
+                    <Icon icon={X} />
+                  </button>
+                </header>
+
+                <div className="load-dialog-grid">
+                  <section className="load-panel" aria-labelledby="demo-data-title">
+                    <h3 id="demo-data-title">Demo data</h3>
+                    <div className="demo-scene-list">
+                      {demoScenes.map((scene) => (
+                        <button
+                          type="button"
+                          className="demo-scene-button"
+                          key={scene.fileName}
+                          onClick={() => handleDemoScene(scene.url, scene.fileName)}
+                        >
+                          <Icon icon={FileJson} />
+                          <span>
+                            <strong>{scene.label}</strong>
+                            <small>{scene.fileName}</small>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="load-panel upload-panel" aria-labelledby="upload-data-title">
+                    <h3 id="upload-data-title">Upload your own</h3>
+                    <label className="upload-dropzone">
+                      <input type="file" accept=".json,application/json" onChange={handleFile} />
+                      <Icon icon={Upload} />
+                      <span>Select JSON file</span>
+                    </label>
+                  </section>
+                </div>
+              </section>
+            </div>
+          )}
         </div>
       </section>
     </main>
@@ -477,59 +653,40 @@ function buildStaticScene(group: THREE.Group, sceneData: SceneData, bounds: Boun
   const spanX = bounds.maxX - bounds.minX
   const spanY = bounds.maxY - bounds.minY
   const size = Math.max(spanX, spanY) + 80
+  const fade = makeEdgeFade(bounds)
 
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(size, size),
-    new THREE.MeshStandardMaterial({ color: 0x17202e, roughness: 0.86, metalness: 0.05 }),
+    new THREE.MeshStandardMaterial({
+      color: 0x17202e,
+      alphaMap: makeGroundAlphaMap(),
+      transparent: true,
+      roughness: 0.86,
+      metalness: 0.05,
+    }),
   )
   ground.position.set(centerX, centerY, -0.03)
   ground.receiveShadow = true
   group.add(ground)
 
-  const grid = new THREE.GridHelper(size, Math.max(8, Math.floor(size / 20)), 0x354153, 0x222c3a)
-  grid.rotation.x = Math.PI / 2
-  grid.position.set(centerX, centerY, 0)
-  group.add(grid)
-  group.add(makeCircularFog(centerX, centerY, size * 0.72))
-
-  const roadEdgeMaterial = new THREE.LineBasicMaterial({ color: 0x8b94a7, transparent: true, opacity: 0.85 })
-  const controlledLaneMaterial = new THREE.LineBasicMaterial({ color: 0x6fcaff, transparent: true, opacity: 0.48 })
-  const laneMaterial = new THREE.LineBasicMaterial({ color: 0x8993a6, transparent: true, opacity: 0.3 })
+  group.add(makeFadedGrid(centerX, centerY, size, Math.max(8, Math.floor(size / 20)), fade))
 
   sceneData.map.road_edges.forEach((edge) => {
-    group.add(makeLine(edge.points, roadEdgeMaterial, 0.035))
+    group.add(makeFadedLine(edge.points, 0x8b94a7, 0.85, 0.035, fade))
   })
 
   sceneData.map.lanes.forEach((lane) => {
-    group.add(makeLine(lane.points, lane.controlled ? controlledLaneMaterial : laneMaterial, 0.05))
+    group.add(makeFadedLine(lane.points, lane.controlled ? 0x6fcaff : 0x8993a6, lane.controlled ? 0.48 : 0.3, 0.05, fade))
   })
 
-  const crosswalkMaterial = new THREE.MeshStandardMaterial({
-    color: 0xe8eef7,
-    transparent: true,
-    opacity: 0.22,
-    roughness: 0.72,
-    side: THREE.DoubleSide,
-  })
   sceneData.map.crosswalks.forEach((crosswalk) => {
-    const mesh = makePolygon(crosswalk.points, crosswalkMaterial, 0.025)
+    const mesh = makeFadedPolygon(crosswalk.points, 0xe8eef7, 0.22, 0.025, fade)
     if (mesh) group.add(mesh)
   })
 }
 
-function buildDynamicScene(group: THREE.Group, sceneData: SceneData, step: number, showTrails: boolean) {
-  const truth = sceneData.truth.lane[step] ?? {}
-
-  sceneData.agents.forEach((agent) => {
-    const state = agent.states[step]
-    if (!state) return
-
-    if (showTrails) {
-      const trail = makeTrail(agent, step)
-      if (trail) group.add(trail)
-    }
-
-    const [x, y, heading] = state
+function buildDynamicScene(group: THREE.Group, sceneData: SceneData): DynamicSceneState {
+  const agents = sceneData.agents.map((agent) => {
     const height = agent.type === 'pedestrian' ? 1.65 : agent.type === 'cyclist' ? 1.35 : 1.55
     const color = agent.is_sdc ? 0xffffff : agentColors[agent.type] ?? agentColors.other
     const box = new THREE.Mesh(
@@ -540,27 +697,128 @@ function buildDynamicScene(group: THREE.Group, sceneData: SceneData, step: numbe
         metalness: agent.type === 'vehicle' ? 0.18 : 0.02,
       }),
     )
-    box.position.set(x, y, height / 2)
-    box.rotation.z = heading
+    box.visible = false
     box.castShadow = true
+
+    const outline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(box.geometry, 18),
+      new THREE.LineBasicMaterial({
+        color: 0xdff7ff,
+        transparent: true,
+        opacity: 0.95,
+        depthTest: false,
+      }),
+    )
+    outline.scale.set(1.06, 1.06, 1.08)
+    outline.visible = false
+    outline.renderOrder = 60
+    box.add(outline)
     group.add(box)
 
-    const nose = new THREE.Mesh(
-      new THREE.ConeGeometry(Math.min(agent.width * 0.34, 0.45), 0.85, 3),
-      new THREE.MeshStandardMaterial({ color: 0x101827, roughness: 0.5 }),
+    const headingIcon = makeHeadingIcon(agent)
+    headingIcon.visible = false
+    group.add(headingIcon)
+
+    const trail = new THREE.Line(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({
+        color: agent.is_sdc ? 0xffffff : 0x7cd3ff,
+        transparent: true,
+        opacity: agent.is_sdc ? 0.58 : 0.26,
+      }),
     )
-    nose.position.set(x + Math.cos(heading) * agent.length * 0.36, y + Math.sin(heading) * agent.length * 0.36, height + 0.08)
-    nose.rotation.z = heading - Math.PI / 2
-    nose.rotation.x = Math.PI / 2
-    group.add(nose)
+    trail.visible = false
+    group.add(trail)
+
+    return { agent, box, outline, headingIcon, trail }
   })
 
   addTrafficLightConnections(group, sceneData.signals)
 
-  sceneData.signals.forEach((signal) => {
-    const state = truth[String(signal.lane_id)] ?? 'UNKNOWN'
-    group.add(makeTrafficLight(signal.stop, signal.heading, state))
+  const signalGroup = new THREE.Group()
+  group.add(signalGroup)
+
+  return { agents, signalGroup }
+}
+
+function updateDynamicScene(state: DynamicSceneState | null, sceneData: SceneData, step: number, showTrails: boolean) {
+  if (!state) return
+  const truth = sceneData.truth.lane[step] ?? {}
+
+  state.agents.forEach(({ agent, box, outline, headingIcon, trail }) => {
+    const agentState = agent.states[step]
+    if (!agentState) {
+      box.visible = false
+      outline.visible = false
+      headingIcon.visible = false
+      trail.visible = false
+      return
+    }
+
+    const [x, y, heading] = agentState
+    const height = agent.type === 'pedestrian' ? 1.65 : agent.type === 'cyclist' ? 1.35 : 1.55
+    box.position.set(x, y, height / 2)
+    box.rotation.z = heading
+    box.visible = true
+
+    headingIcon.position.set(x, y, height + 0.1)
+    headingIcon.rotation.z = heading
+    headingIcon.visible = true
+
+    updateTrail(trail, agent, step, showTrails)
   })
+
+  clearGroup(state.signalGroup)
+  sceneData.signals.forEach((signal) => {
+    const signalState = truth[String(signal.lane_id)] ?? 'UNKNOWN'
+    state.signalGroup.add(makeTrafficLight(signal.stop, signal.heading, signalState))
+  })
+}
+
+function setHoveredAgent(refs: ThreeRefs, hoveredBox: THREE.Mesh | null) {
+  const next = hoveredBox
+    ? refs.dynamicState?.agents.find(({ box, agent }) => box === hoveredBox && agent.type === 'vehicle' && !agent.is_sdc) ?? null
+    : null
+
+  if (refs.hoveredAgent === next) return
+  if (refs.hoveredAgent) refs.hoveredAgent.outline.visible = false
+  refs.hoveredAgent = next
+  if (refs.hoveredAgent) refs.hoveredAgent.outline.visible = true
+}
+
+function clearHoveredAgent(refs: ThreeRefs | null) {
+  if (!refs) return
+  if (refs.hoveredAgent) refs.hoveredAgent.outline.visible = false
+  refs.hoveredAgent = null
+}
+
+function updateHoverDot(
+  dot: HTMLDivElement | null,
+  stage: HTMLDivElement,
+  camera: THREE.PerspectiveCamera,
+  hoveredAgent: AgentRender | null,
+) {
+  if (!dot || !hoveredAgent || !hoveredAgent.box.visible) {
+    hideHoverDot(dot)
+    return
+  }
+
+  const height = hoveredAgent.agent.type === 'pedestrian' ? 1.65 : hoveredAgent.agent.type === 'cyclist' ? 1.35 : 1.55
+  const point = hoveredAgent.box.localToWorld(new THREE.Vector3(0, 0, height / 2 + 1.15))
+  const projected = point.project(camera)
+
+  if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y) || projected.z < -1 || projected.z > 1) {
+    hideHoverDot(dot)
+    return
+  }
+
+  const rect = stage.getBoundingClientRect()
+  dot.style.opacity = '1'
+  dot.style.transform = `translate(${((projected.x + 1) / 2) * rect.width}px, ${((1 - projected.y) / 2) * rect.height}px)`
+}
+
+function hideHoverDot(dot: HTMLDivElement | null) {
+  if (dot) dot.style.opacity = '0'
 }
 
 function fitCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls, bounds: Bounds) {
@@ -616,54 +874,134 @@ function Icon({ icon, className }: { icon: IconNode; className?: string }) {
   )
 }
 
-function makeLine(points: Point[], material: THREE.LineBasicMaterial, z: number) {
-  const geometry = new THREE.BufferGeometry().setFromPoints(points.map(([x, y]) => new THREE.Vector3(x, y, z)))
-  return new THREE.Line(geometry, material)
+function makeHeadingIcon(agent: SceneData['agents'][number]) {
+  const length = Math.max(0.72, Math.min(1.25, agent.length * 0.24))
+  const width = Math.max(0.42, Math.min(0.82, agent.width * 0.48))
+  const shape = new THREE.Shape([
+    new THREE.Vector2(length * 0.54, 0),
+    new THREE.Vector2(-length * 0.46, width / 2),
+    new THREE.Vector2(-length * 0.26, 0),
+    new THREE.Vector2(-length * 0.46, -width / 2),
+  ])
+  const icon = new THREE.Mesh(
+    new THREE.ShapeGeometry(shape),
+    new THREE.MeshBasicMaterial({
+      color: agent.is_sdc ? 0x101722 : 0x0b1520,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    }),
+  )
+  icon.renderOrder = 70
+  return icon
 }
 
-function makePolygon(points: Point[], material: THREE.Material, z: number) {
+function makeFadedLine(points: Point[], color: number, opacity: number, z: number, fade: EdgeFade) {
+  const geometry = new THREE.BufferGeometry().setFromPoints(points.map(([x, y]) => new THREE.Vector3(x, y, z)))
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(points.flatMap((point) => makeFadedColor(point, color, fade)), 3))
+
+  return new THREE.Line(
+    geometry,
+    new THREE.LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity,
+    }),
+  )
+}
+
+function makeFadedPolygon(points: Point[], color: number, opacity: number, z: number, fade: EdgeFade) {
   if (points.length < 3) return null
 
   const shape = new THREE.Shape(points.map(([x, y]) => new THREE.Vector2(x, y)))
   const geometry = new THREE.ShapeGeometry(shape)
-  const mesh = new THREE.Mesh(geometry, material)
+  const colors: number[] = []
+  const position = geometry.getAttribute('position')
+  for (let index = 0; index < position.count; index += 1) {
+    colors.push(...makeFadedColor([position.getX(index), position.getY(index)], color, fade))
+  }
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity,
+      side: THREE.DoubleSide,
+    }),
+  )
   mesh.position.z = z
   return mesh
 }
 
-function makeCircularFog(centerX: number, centerY: number, radius: number) {
+function makeFadedGrid(centerX: number, centerY: number, size: number, divisions: number, fade: EdgeFade) {
+  const group = new THREE.Group()
+  const startX = centerX - size / 2
+  const startY = centerY - size / 2
+  const step = size / divisions
+
+  for (let index = 0; index <= divisions; index += 1) {
+    const offset = index * step
+    const color = index === Math.floor(divisions / 2) ? 0x354153 : 0x222c3a
+    const opacity = index === Math.floor(divisions / 2) ? 0.54 : 0.34
+
+    group.add(makeFadedLine([[startX + offset, startY], [startX + offset, startY + size]], color, opacity, 0, fade))
+    group.add(makeFadedLine([[startX, startY + offset], [startX + size, startY + offset]], color, opacity, 0, fade))
+  }
+
+  return group
+}
+
+function makeFadedColor(point: Point, color: number, fade: EdgeFade) {
+  const edgeAmount = getEdgeFadeAmount(point, fade)
+  const mixedColor = new THREE.Color(sceneBackground).lerp(new THREE.Color(color), edgeAmount)
+  return [mixedColor.r, mixedColor.g, mixedColor.b]
+}
+
+function getEdgeFadeAmount([x, y]: Point, fade: EdgeFade) {
+  const distanceToEdge = Math.min(x - fade.minX, fade.maxX - x, y - fade.minY, fade.maxY - y)
+  return smoothstep(0, 1, clamp(distanceToEdge / fade.fadeDistance, 0, 1))
+}
+
+function makeGroundAlphaMap() {
   const canvas = document.createElement('canvas')
   canvas.width = 512
   canvas.height = 512
 
   const context = canvas.getContext('2d')
   if (context) {
-    const gradient = context.createRadialGradient(256, 256, 170, 256, 256, 256)
-    gradient.addColorStop(0, 'rgba(16, 23, 34, 0)')
-    gradient.addColorStop(0.58, 'rgba(16, 23, 34, 0.18)')
-    gradient.addColorStop(0.82, 'rgba(16, 23, 34, 0.72)')
-    gradient.addColorStop(1, 'rgba(16, 23, 34, 1)')
+    const gradient = context.createRadialGradient(256, 256, 150, 256, 256, 256)
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 1)')
+    gradient.addColorStop(0.58, 'rgba(255, 255, 255, 0.96)')
+    gradient.addColorStop(0.82, 'rgba(255, 255, 255, 0.36)')
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
     context.fillStyle = gradient
     context.fillRect(0, 0, canvas.width, canvas.height)
   }
 
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
+  return texture
+}
 
-  const fog = new THREE.Mesh(
-    new THREE.CircleGeometry(radius, 160),
-    new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      map: texture,
-      transparent: true,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    }),
-  )
-  fog.name = 'circular-map-edge-fog'
-  fog.position.set(centerX, centerY, 0.09)
-  fog.renderOrder = 8
-  return fog
+function makeEdgeFade(bounds: Bounds): EdgeFade {
+  const spanX = bounds.maxX - bounds.minX
+  const spanY = bounds.maxY - bounds.minY
+  return {
+    ...bounds,
+    fadeDistance: Math.max(18, Math.min(52, Math.max(spanX, spanY) * 0.2)),
+  }
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
+}
+
+function smoothstep(edge0: number, edge1: number, value: number) {
+  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1)
+  return t * t * (3 - 2 * t)
 }
 
 function addTrafficLightConnections(group: THREE.Group, signals: SceneData['signals']) {
@@ -813,19 +1151,24 @@ function angleDelta(a: number, b: number) {
   return Math.atan2(Math.sin(a - b), Math.cos(a - b))
 }
 
-function makeTrail(agent: SceneData['agents'][number], step: number) {
+function updateTrail(trail: THREE.Line, agent: SceneData['agents'][number], step: number, showTrail: boolean) {
+  if (!showTrail) {
+    trail.visible = false
+    return
+  }
+
   const states = agent.states
     .slice(Math.max(0, step - 18), step + 1)
     .filter((state): state is [number, number, number] => Boolean(state))
-  if (states.length < 2) return null
+  if (states.length < 2) {
+    trail.visible = false
+    return
+  }
 
-  const geometry = new THREE.BufferGeometry().setFromPoints(states.map(([x, y]) => new THREE.Vector3(x, y, 0.22)))
-  const material = new THREE.LineBasicMaterial({
-    color: agent.is_sdc ? 0xffffff : 0x7cd3ff,
-    transparent: true,
-    opacity: agent.is_sdc ? 0.58 : 0.26,
-  })
-  return new THREE.Line(geometry, material)
+  const oldGeometry = trail.geometry
+  trail.geometry = new THREE.BufferGeometry().setFromPoints(states.map(([x, y]) => new THREE.Vector3(x, y, 0.22)))
+  oldGeometry.dispose()
+  trail.visible = true
 }
 
 function getBounds(sceneData: SceneData) {
@@ -867,6 +1210,9 @@ function clearGroup(group: THREE.Group) {
 function disposeMaterial(material: THREE.Material) {
   if ('map' in material && material.map instanceof THREE.Texture) {
     material.map.dispose()
+  }
+  if ('alphaMap' in material && material.alphaMap instanceof THREE.Texture) {
+    material.alphaMap.dispose()
   }
   material.dispose()
 }
