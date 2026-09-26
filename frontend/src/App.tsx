@@ -5,6 +5,8 @@ import type { IconNode } from 'lucide'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import './App.css'
+import { SignalOverlay } from './signal_overlay'
+import type { OverlaySceneData } from './signal_overlay'
 
 type Point = [number, number]
 type AgentState = [number, number, number] | null
@@ -28,6 +30,7 @@ type SceneData = {
   }
   signals: {
     lane_id: number
+    approach?: string
     stop: Point
     heading: number
   }[]
@@ -43,6 +46,10 @@ type SceneData = {
     approach: Record<string, string>[]
     lane: Record<string, string>[]
   }
+  // Added by predict_scene.py; absent in older scene files.
+  ego_lane?: number | null
+  ego_approach?: string | null
+  model?: OverlaySceneData['model']
 }
 
 type Bounds = {
@@ -80,7 +87,7 @@ const agentColors: Record<string, number> = {
 const maxPolarAngle = (82 * Math.PI) / 180
 const minPolarAngle = (10 * Math.PI) / 180
 const sceneBackground = 0x101722
-const initialFocusZoom = 1.65
+const initialFocusZoom = 1.4
 
 function App() {
   const stageRef = useRef<HTMLDivElement | null>(null)
@@ -94,6 +101,10 @@ function App() {
   const [loopPlayback, setLoopPlayback] = useState(true)
   const [loading, setLoading] = useState(true)
   const [controlGuideOpen, setControlGuideOpen] = useState(true)
+  const overlayRef = useRef<SignalOverlay | null>(null)
+  const [overlayOn, setOverlayOn] = useState(false)
+  // Not wired to anything yet: will come from the BLE receiver / demo stage.
+  const [beaconAlive] = useState(false)
 
   const bounds = useMemo(() => (sceneData ? getBounds(sceneData) : null), [sceneData])
 
@@ -136,7 +147,7 @@ function App() {
 
   useEffect(() => {
     queueMicrotask(() => {
-      void loadScene('/scene.json', 'Sample scene loaded')
+      void loadScene('/scenes/scene_116.json', 'Demo scene 116 loaded')
     })
   }, [loadScene])
 
@@ -202,14 +213,15 @@ function App() {
       renderer.setSize(rect.width, rect.height, false)
     }
 
-    const animate = () => {
+    const animate = (now: number) => {
       controls.update()
+      overlayRef.current?.animate(now)
       renderer.render(threeScene, camera)
       refs.frameId = window.requestAnimationFrame(animate)
     }
 
     resize()
-    animate()
+    animate(performance.now())
     window.addEventListener('resize', resize)
 
     return () => {
@@ -238,6 +250,25 @@ function App() {
       applyCameraZoom(camera, zoom)
     }
   }, [sceneData, bounds])
+
+  // One overlay per scene; rebuilt when a new scene loads.
+  useEffect(() => {
+    if (!threeRef.current || !sceneData) return
+    const overlay = new SignalOverlay(threeRef.current.scene, sceneData, { zUp: true })
+    overlayRef.current = overlay
+    return () => {
+      overlay.dispose()
+      if (overlayRef.current === overlay) overlayRef.current = null
+    }
+  }, [sceneData])
+
+  useEffect(() => {
+    overlayRef.current?.setVisible(overlayOn)
+  }, [sceneData, overlayOn])
+
+  useEffect(() => {
+    overlayRef.current?.update(step, beaconAlive)
+  }, [sceneData, step, beaconAlive])
 
   useEffect(() => {
     if (!threeRef.current || !sceneData) return
@@ -335,6 +366,15 @@ function App() {
             </label>
             <button type="button" onClick={recenterScene} disabled={!sceneData}>
               Recenter
+            </button>
+            <button
+              type="button"
+              className={overlayOn ? 'is-active' : undefined}
+              aria-pressed={overlayOn}
+              onClick={() => setOverlayOn((value) => !value)}
+              disabled={!sceneData}
+            >
+              Overlay {overlayOn ? 'On' : 'Off'}
             </button>
             <label className="zoom-control">
               <span>Zoom</span>
@@ -543,10 +583,11 @@ function focusSdcCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls
   const [x, y, heading] = state
   const center = new THREE.Vector3(x, y, 0)
   const distance = 34
+  // Straight behind the car along its heading, looking forward over its roof.
   camera.position.set(
-    x - Math.cos(heading) * distance * 0.55 - Math.sin(heading) * distance * 0.46,
-    y - Math.sin(heading) * distance * 0.55 + Math.cos(heading) * distance * 0.46,
-    distance * 0.72,
+    x - Math.cos(heading) * distance * 0.9,
+    y - Math.sin(heading) * distance * 0.9,
+    distance * 0.4,
   )
   controls.target.copy(center)
   controls.update()

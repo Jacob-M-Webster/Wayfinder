@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dark signal: decision overlay demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --asphalt: #1c1f22; --plate: rgba(24, 28, 33, 0.92); --line: #3b4147;
+    --text: #e8ebe6; --muted: rgba(232, 235, 230, 0.6);
+    --stop: #ff4438; --go: #19d3a2; --caution: #ffb000; --beacon: #4aa8ff;
+  }
+  html, body { margin: 0; height: 100%; background: var(--asphalt); color: var(--text);
+    font-family: Barlow, "Segoe UI", sans-serif; overflow: hidden; }
+  canvas { display: block; }
+
+  #bar { position: absolute; top: 0; left: 0; right: 0; display: flex; gap: 12px; align-items: center;
+    padding: 10px 14px; background: linear-gradient(var(--plate), transparent); }
+  #bar input[type=range] { flex: 1; accent-color: var(--text); }
+  #time { font-family: "Barlow Condensed", sans-serif; font-size: 20px; min-width: 64px; text-align: right; }
+
+  #stage { position: absolute; left: 18px; bottom: 18px; max-width: 360px; padding: 16px 18px;
+    background: var(--plate); border-left: 6px solid var(--beacon); border-radius: 4px 14px 14px 4px; }
+  #stage h1 { margin: 0; font: 700 34px/1.05 "Barlow Condensed", sans-serif; }
+  #stage p { margin: 4px 0 14px; color: var(--muted); font-size: 15px; }
+  .toggles { display: flex; flex-wrap: wrap; gap: 8px; }
+
+  button { font: 600 17px "Barlow Condensed", sans-serif; color: var(--text); background: #2a2f35;
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button[aria-pressed="false"] { color: var(--muted); }
+  button:focus-visible { outline: 2px solid var(--beacon); outline-offset: 2px; }
+  kbd { font: 500 12px Barlow, sans-serif; color: var(--muted); margin-left: 6px; }
+
+  [hidden] { display: none !important; }
+  #empty { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
+    color: var(--muted); font: 500 22px "Barlow Condensed", sans-serif; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <input type="file" id="file" accept=".json" aria-label="Load scene file">
+  <button id="play" aria-label="Play">Play</button>
+  <input type="range" id="slider" min="0" max="0" value="0" aria-label="Scrub timeline">
+  <span id="time">0.0 s</span>
+</div>
+
+<div id="stage" hidden>
+  <h1 id="stageTitle">Normal</h1>
+  <p id="stageText">Signals powered, beacon broadcasting</p>
+  <div class="toggles">
+    <button id="gridBtn" aria-pressed="true">Grid power<kbd>G</kbd></button>
+    <button id="beaconBtn" aria-pressed="true">Beacon<kbd>B</kbd></button>
+    <button id="truthBtn" aria-pressed="true">Show actual<kbd>T</kbd></button>
+    <button id="camBtn" aria-pressed="false">Chase cam<kbd>C</kbd></button>
+  </div>
+</div>
+
+<div id="empty">Load a scene file (scene_116.json, scene_55.json…) to start</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="signal_overlay.js"></script>
+<script>
+const toWorld = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
+const LIGHT = { STOP: "#ff4438", CAUTION: "#ffb000", GO: "#19d3a2", DARK: "#2d3136", UNKNOWN: "#555b61" };
+const AGENT = { vehicle: "#6fa8c7", pedestrian: "#e0a458", cyclist: "#b48ead", other: "#9aa0a6" };
+const HEIGHT = { vehicle: 1.6, pedestrian: 1.7, cyclist: 1.5, other: 1.5 };
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.prepend(renderer.domElement);
+const scene3 = new THREE.Scene();
+scene3.background = new THREE.Color("#1c1f22");
+scene3.fog = new THREE.Fog("#1c1f22", 90, 260);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.5, 2000);
+camera.position.set(-45, 55, 55);
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+let data = null, overlay = null, world = null, step = 0, playing = false, acc = 0;
+let gridOn = true, beaconAlive = true, chase = false;
+const $ = id => document.getElementById(id);
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener("resize", resize); resize();
+
+// ---------- build the static world + agents ----------
+function line(points, color, y = 0.03) {
+  const g = new THREE.BufferGeometry().setFromPoints(points.map(([x, z]) => toWorld(x, z, y)));
+  return new THREE.Line(g, new THREE.LineBasicMaterial({ color }));
+}
+
+function build(d) {
+  if (world) scene3.remove(world);
+  if (overlay) overlay.dispose();
+  world = new THREE.Group();
+
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000),
+                                new THREE.MeshBasicMaterial({ color: "#23272b" }));
+  ground.rotation.x = -Math.PI / 2;
+  world.add(ground);
+  for (const e of d.map.road_edges) world.add(line(e.points, "#8a9096"));
+  for (const l of d.map.lanes) world.add(line(l.points, l.controlled ? "#59616a" : "#3b4147"));
+  for (const c of d.map.crosswalks) {
+    const shape = new THREE.Shape(c.points.map(([x, y]) => new THREE.Vector2(x, y)));
+    const m = new THREE.Mesh(new THREE.ShapeGeometry(shape),
+      new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.1 }));
+    m.rotation.x = -Math.PI / 2;   // shape is in x/y; lay it flat so y -> -z
+    m.position.y = 0.02;
+    world.add(m);
+  }
+
+  // Stop bars on the ground = the PHYSICAL light (goes dark when the grid is cut).
+  world.userData.bars = d.signals.map(s => {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 3.2),
+                               new THREE.MeshBasicMaterial({ color: LIGHT.UNKNOWN }));
+    bar.position.copy(toWorld(s.stop[0], s.stop[1], 0.04));
+    bar.rotation.y = s.heading;
+    world.add(bar);
+    return { bar, lane: String(s.lane_id) };
+  });
+
+  // Agents: translucent boxes with bright edges
+  world.userData.agents = d.agents.map(a => {
+    const h = HEIGHT[a.type] || 1.5;
+    const color = a.is_sdc ? "#f2f4f0" : (AGENT[a.type] || AGENT.other);
+    const geo = new THREE.BoxGeometry(Math.max(a.length, 0.5), h, Math.max(a.width, 0.5));
+    const box = new THREE.Group();
+    box.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: a.is_sdc ? 0.7 : 0.3 })));
+    box.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color })));
+    box.userData = { a, h };
+    world.add(box);
+    return box;
+  });
+
+  scene3.add(world);
+  frameCamera(d);
+  overlay = new SignalOverlay(THREE, scene3, d, { toWorld, showTruth: $("truthBtn").getAttribute("aria-pressed") === "true" });
+}
+
+// Frame the intersection: look at the center from behind the Waymo car's approach.
+function frameCamera(d) {
+  let r = 35;
+  for (const l of d.map.lanes) for (const [x, y] of l.points) r = Math.max(r, Math.min(Math.hypot(x, y), 60));
+  const sig = d.signals.find(s => s.lane_id === d.ego_lane);
+  const h = sig ? sig.heading : -Math.PI / 4;
+  camera.position.set(-Math.cos(h) * r * 1.1, r * 0.9, Math.sin(h) * r * 1.1);
+  controls.target.set(0, 0, 0);
+  controls.update();
+}
+
+// ---------- per-step update ----------
+function applyStep() {
+  const tl = data.truth.lane[step] || {};
+  for (const { bar, lane } of world.userData.bars) {
+    const s = tl[lane];
+    bar.material.color.set(!gridOn ? LIGHT.DARK : (LIGHT[s] || LIGHT.UNKNOWN));
+  }
+  for (const box of world.userData.agents) {
+    const st = box.userData.a.states[step];
+    box.visible = !!st;
+    if (!st) continue;
+    box.position.copy(toWorld(st[0], st[1], box.userData.h / 2));
+    box.rotation.y = st[2];
+  }
+  overlay.update(step, beaconAlive);
+  $("slider").value = step;
+  $("time").textContent = `${(step / data.hz).toFixed(1)} s`;
+  updateStage();
+}
+
+function updateStage() {
+  const ego = overlay.decisions.ego || Object.values(overlay.decisions)[0];
+  let title, text, color;
+  if (gridOn && beaconAlive) { title = "Normal"; text = "Signals powered, beacon broadcasting"; color = "var(--beacon)"; }
+  else if (beaconAlive) { title = "Grid down"; text = "Lights are dark, beacon keeps broadcasting on battery"; color = "var(--beacon)"; }
+  else if (ego && ego.source === "MODEL") { title = "Beacon lost"; text = "Reading the light from surrounding traffic"; color = "var(--go)"; }
+  else { title = "Safe fallback"; text = "Not enough evidence, treating it as an all-way stop"; color = "var(--stop)"; }
+  $("stageTitle").textContent = title;
+  $("stageText").textContent = text;
+  $("stage").style.borderLeftColor = color;
+}
+
+// ---------- controls ----------
+function toggle(id, value) { $(id).setAttribute("aria-pressed", String(value)); }
+const actions = {
+  grid() { gridOn = !gridOn; toggle("gridBtn", gridOn); if (data) applyStep(); },
+  beacon() { beaconAlive = !beaconAlive; toggle("beaconBtn", beaconAlive); if (data) applyStep(); },
+  truth() {
+    const v = $("truthBtn").getAttribute("aria-pressed") !== "true";
+    toggle("truthBtn", v); overlay?.setShowTruth(v);
+  },
+  cam() { chase = !chase; toggle("camBtn", chase); controls.enabled = !chase; },
+  play() { if (!data) return; playing = !playing; $("play").textContent = playing ? "Pause" : "Play"; },
+};
+$("gridBtn").onclick = actions.grid;
+$("beaconBtn").onclick = actions.beacon;
+$("truthBtn").onclick = actions.truth;
+$("camBtn").onclick = actions.cam;
+$("play").onclick = actions.play;
+$("slider").oninput = e => { step = +e.target.value; applyStep(); };
+addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" && e.target.type !== "range") return;
+  const k = e.key.toLowerCase();
+  if (k === "g") actions.grid();
+  else if (k === "b") actions.beacon();
+  else if (k === "t") actions.truth();
+  else if (k === "c") actions.cam();
+  else if (k === " ") { e.preventDefault(); actions.play(); }
+  else if (data && k === "arrowright") { step = Math.min(step + 1, data.num_steps - 1); applyStep(); }
+  else if (data && k === "arrowleft") { step = Math.max(step - 1, 0); applyStep(); }
+});
+
+$("file").onchange = e => {
+  const r = new FileReader();
+  r.onload = () => {
+    try { data = JSON.parse(r.result); }
+    catch { $("empty").textContent = "That file isn't valid JSON. Load a scene file exported by approaches.py."; return; }
+    if (!data.model) $("empty").textContent = "This scene has no model predictions yet. Run predict_scene.py on it first.";
+    else $("empty").hidden = true;
+    build(data);
+    $("slider").max = data.num_steps - 1;
+    $("stage").hidden = false;
+    step = 0; applyStep();
+  };
+  r.readAsText(e.target.files[0]);
+};
+
+// ---------- loop ----------
+const ego = () => world?.userData.agents.find(b => b.userData.a.is_sdc && b.visible);
+let last = performance.now();
+function loop(now) {
+  const dt = (now - last) / 1000; last = now;
+  if (data && playing) {
+    acc += dt;
+    const period = 1 / data.hz;
+    while (acc >= period) { acc -= period; step = (step + 1) % data.num_steps; applyStep(); }
+  }
+  if (overlay) overlay.animate(now);
+  const e = ego();
+  if (chase && e) {
+    const h = e.rotation.y, p = e.position;
+    const back = new THREE.Vector3(-Math.cos(h) * 16, 7, Math.sin(h) * 16);
+    camera.position.lerp(p.clone().add(back), 0.08);
+    camera.lookAt(p.x + Math.cos(h) * 14, 2, p.z - Math.sin(h) * 14);
+  } else {
+    controls.update();
+  }
+  renderer.render(scene3, camera);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
