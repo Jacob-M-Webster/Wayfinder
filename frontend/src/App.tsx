@@ -75,6 +75,11 @@ type EdgeFade = Bounds & {
   fadeDistance: number
 }
 
+type SignalBarLayout = {
+  stop: Point
+  heading: number
+}
+
 type ThreeRefs = {
   renderer: THREE.WebGLRenderer
   scene: THREE.Scene
@@ -100,6 +105,7 @@ type AgentRender = {
 type DynamicSceneState = {
   agents: AgentRender[]
   signalGroup: THREE.Group
+  signalMaterials: THREE.MeshStandardMaterial[]
 }
 
 const signalColors: Record<string, number> = {
@@ -285,6 +291,7 @@ function App() {
     const animate = () => {
       controls.update()
       updateHoverDot(hoverDotRef.current, stage, camera, refs.hoveredAgent)
+      updateSignalFlashes(refs.dynamicState?.signalMaterials ?? [], performance.now())
       renderer.render(threeScene, camera)
       refs.frameId = window.requestAnimationFrame(animate)
     }
@@ -693,12 +700,10 @@ function buildDynamicScene(group: THREE.Group, sceneData: SceneData): DynamicSce
     return { agent, box, outline, headingIcon, trail }
   })
 
-  addTrafficLightConnections(group, sceneData.signals)
-
   const signalGroup = new THREE.Group()
   group.add(signalGroup)
 
-  return { agents, signalGroup }
+  return { agents, signalGroup, signalMaterials: [] }
 }
 
 function updateDynamicScene(state: DynamicSceneState | null, sceneData: SceneData, step: number, showTrails: boolean) {
@@ -729,9 +734,14 @@ function updateDynamicScene(state: DynamicSceneState | null, sceneData: SceneDat
   })
 
   clearGroup(state.signalGroup)
-  sceneData.signals.forEach((signal) => {
+  state.signalMaterials = []
+  const signalLayouts = getSignalBarLayouts(sceneData.signals)
+  sceneData.signals.forEach((signal, index) => {
     const signalState = truth[String(signal.lane_id)] ?? 'UNKNOWN'
-    state.signalGroup.add(makeTrafficLight(signal.stop, signal.heading, signalState))
+    const layout = signalLayouts[index]
+    const { group, flashMaterial } = makeTrafficFloorBar(layout.stop, layout.heading, signalState)
+    state.signalGroup.add(group)
+    state.signalMaterials.push(flashMaterial)
   })
 }
 
@@ -963,151 +973,133 @@ function smoothstep(edge0: number, edge1: number, value: number) {
   return t * t * (3 - 2 * t)
 }
 
-function addTrafficLightConnections(group: THREE.Group, signals: SceneData['signals']) {
-  const anchors = getTrafficLightAnchors(signals)
+function getSignalBarLayouts(signals: SceneData['signals']): SignalBarLayout[] {
+  const layouts = signals.map((signal) => ({ stop: signal.stop, heading: signal.heading }))
+  const clusters: number[][] = []
+  const visited = new Set<number>()
 
-  anchors.forEach((anchor, index) => {
-    const axis = new THREE.Vector2(Math.cos(anchor.rotation), Math.sin(anchor.rotation))
-    const rowNeighbors = anchors
-      .filter((candidate, candidateIndex) => {
-        if (candidateIndex === index) return false
-        if (Math.abs(angleDelta(anchor.rotation, candidate.rotation)) > 0.16) return false
+  signals.forEach((signal, index) => {
+    if (visited.has(index)) return
 
-        const offset = candidate.point.clone().sub(anchor.point)
-        const along = offset.dot(axis)
-        const across = Math.abs(offset.x * -axis.y + offset.y * axis.x)
-        return along > 0.35 && along < 7.2 && across < 1.2
-      })
-      .sort((a, b) => a.point.clone().sub(anchor.point).dot(axis) - b.point.clone().sub(anchor.point).dot(axis))
+    const cluster = [index]
+    visited.add(index)
 
-    const next = rowNeighbors[0]
-    if (!next) return
+    for (let candidateIndex = index + 1; candidateIndex < signals.length; candidateIndex += 1) {
+      const candidate = signals[candidateIndex]
+      if (visited.has(candidateIndex)) continue
+      if (Math.abs(angleDelta(signal.heading, candidate.heading)) > 0.16) continue
+      if (pointDistance(signal.stop, candidate.stop) > 6.4) continue
 
-    group.add(makeTrafficLightConnector(anchor.point, next.point))
-  })
-}
+      cluster.push(candidateIndex)
+      visited.add(candidateIndex)
+    }
 
-function getTrafficLightAnchors(signals: SceneData['signals']) {
-  const anchors: { key: string; point: THREE.Vector2; rotation: number }[] = []
-  const seen = new Set<string>()
-
-  signals.forEach((signal) => {
-    const rotation = signal.heading + Math.PI / 2
-    const x = signal.stop[0] + Math.cos(rotation) * -1.65 + Math.cos(rotation + Math.PI / 2) * -0.34
-    const y = signal.stop[1] + Math.sin(rotation) * -1.65 + Math.sin(rotation + Math.PI / 2) * -0.34
-    const key = `${Math.round(x * 10)},${Math.round(y * 10)},${Math.round(rotation * 10)}`
-
-    if (seen.has(key)) return
-    seen.add(key)
-    anchors.push({ key, point: new THREE.Vector2(x, y), rotation })
+    clusters.push(cluster)
   })
 
-  return anchors
-}
+  clusters.forEach((cluster) => {
+    if (cluster.length < 2) return
 
-function makeTrafficLightConnector(start: THREE.Vector2, end: THREE.Vector2) {
-  const midpoint = start.clone().add(end).multiplyScalar(0.5)
-  const length = start.distanceTo(end)
-  const angle = Math.atan2(end.y - start.y, end.x - start.x)
-  const connector = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.045, 0.045, length, 12),
-    makeSignalMaterial({ color: 0x48515f, roughness: 0.5, metalness: 0.3 }),
-  )
+    const heading = circularMean(cluster.map((index) => signals[index].heading))
+    const forward = new THREE.Vector2(Math.cos(heading), Math.sin(heading))
+    const side = new THREE.Vector2(-forward.y, forward.x)
+    const center = cluster.reduce(
+      (sum, index) => sum.add(new THREE.Vector2(signals[index].stop[0], signals[index].stop[1])),
+      new THREE.Vector2(),
+    ).multiplyScalar(1 / cluster.length)
 
-  connector.position.set(midpoint.x, midpoint.y, 2.16)
-  connector.rotation.z = angle + Math.PI / 2
-  connector.rotation.x = Math.PI / 2
-  connector.castShadow = true
-  connector.renderOrder = 25
-  return connector
-}
-
-function makeTrafficLight(stop: Point, heading: number, state: string) {
-  const group = new THREE.Group()
-  const activeColor = signalColors[state] ?? signalColors.UNKNOWN
-
-  const stopBar = new THREE.Mesh(
-    new THREE.BoxGeometry(3.8, 0.2, 0.1),
-    makeSignalMaterial({
-      color: activeColor,
-      emissive: activeColor,
-      emissiveIntensity: 0.45,
-      roughness: 0.45,
-    }),
-  )
-  stopBar.position.z = 0.12
-  group.add(stopBar)
-
-  const pole = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.06, 0.08, 1.9, 12),
-    makeSignalMaterial({ color: 0x48515f, roughness: 0.5, metalness: 0.3 }),
-  )
-  pole.position.set(-1.65, -0.34, 0.95)
-  pole.rotation.x = Math.PI / 2
-  pole.castShadow = true
-  group.add(pole)
-
-  const housing = new THREE.Mesh(
-    new THREE.BoxGeometry(0.46, 0.22, 1.06),
-    makeSignalMaterial({ color: 0x202734, roughness: 0.52, metalness: 0.16 }),
-  )
-  housing.position.set(-1.65, -0.34, 1.96)
-  housing.castShadow = true
-  group.add(housing)
-
-  const lensStates = [
-    { key: 'STOP', z: 2.27, color: 0xf25555 },
-    { key: 'CAUTION', z: 1.96, color: 0xf7c948 },
-    { key: 'GO', z: 1.65, color: 0x43d17a },
-  ]
-  lensStates.forEach((lens) => {
-    const isActive = state === lens.key
-    const material = makeSignalMaterial({
-      color: isActive ? lens.color : 0x2d3542,
-      emissive: isActive ? lens.color : 0x000000,
-      emissiveIntensity: isActive ? 1.8 : 0,
-      roughness: 0.34,
+    const sorted = [...cluster].sort((a, b) => {
+      const pointA = new THREE.Vector2(signals[a].stop[0], signals[a].stop[1]).sub(center)
+      const pointB = new THREE.Vector2(signals[b].stop[0], signals[b].stop[1]).sub(center)
+      return pointA.dot(side) - pointB.dot(side)
     })
-    const light = new THREE.Mesh(new THREE.SphereGeometry(0.105, 18, 12), material)
-    light.position.set(-1.65, -0.46, lens.z)
-    light.scale.y = 0.35
-    group.add(light)
+    const spacing = 0.84
+
+    sorted.forEach((signalIndex, order) => {
+      const original = signals[signalIndex].stop
+      const offset = (order - (sorted.length - 1) / 2) * spacing
+      const shifted = new THREE.Vector2(original[0], original[1]).addScaledVector(side, offset)
+      layouts[signalIndex] = { stop: [shifted.x, shifted.y], heading }
+    })
   })
 
-  if (state === 'UNKNOWN') {
-    const unknownLens = new THREE.Mesh(
-      new THREE.SphereGeometry(0.08, 16, 10),
-      makeSignalMaterial({
-        color: signalColors.UNKNOWN,
-        emissive: signalColors.UNKNOWN,
-        emissiveIntensity: 0.8,
-        roughness: 0.4,
-      }),
-    )
-    unknownLens.position.set(-1.65, -0.46, 1.36)
-    unknownLens.scale.y = 0.35
-    group.add(unknownLens)
-  }
-
-  group.position.set(stop[0], stop[1], 0)
-  group.rotation.z = heading + Math.PI / 2
-  group.renderOrder = 30
-  group.traverse((object) => {
-    object.renderOrder = 30
-  })
-  return group
+  return layouts
 }
 
-function makeSignalMaterial(parameters: THREE.MeshStandardMaterialParameters) {
-  return new THREE.MeshStandardMaterial({
-    ...parameters,
-    depthTest: false,
-    depthWrite: false,
-  })
+function circularMean(angles: number[]) {
+  const sum = angles.reduce(
+    (total, angle) => {
+      total.x += Math.cos(angle)
+      total.y += Math.sin(angle)
+      return total
+    },
+    { x: 0, y: 0 },
+  )
+  return Math.atan2(sum.y, sum.x)
+}
+
+function pointDistance(a: Point, b: Point) {
+  return Math.hypot(a[0] - b[0], a[1] - b[1])
 }
 
 function angleDelta(a: number, b: number) {
   return Math.atan2(Math.sin(a - b), Math.cos(a - b))
+}
+
+function makeTrafficFloorBar(stop: Point, heading: number, state: string) {
+  const group = new THREE.Group()
+  const activeColor = signalColors[state] ?? signalColors.UNKNOWN
+  const baseMaterial = new THREE.MeshStandardMaterial({
+    color: 0x161e2b,
+    roughness: 0.7,
+    metalness: 0.08,
+    depthWrite: false,
+  })
+
+  const base = new THREE.Mesh(
+    new THREE.BoxGeometry(4.8, 0.78, 0.075),
+    baseMaterial,
+  )
+  base.position.z = 0.048
+  base.renderOrder = 28
+  group.add(base)
+
+  const flashMaterial = new THREE.MeshStandardMaterial({
+    color: activeColor,
+    emissive: activeColor,
+    emissiveIntensity: 0.55,
+    roughness: 0.38,
+    transparent: true,
+    opacity: 0.88,
+    depthWrite: false,
+  })
+  flashMaterial.userData.baseColor = new THREE.Color(activeColor)
+
+  const flash = new THREE.Mesh(
+    new THREE.BoxGeometry(4.2, 0.42, 0.09),
+    flashMaterial,
+  )
+  flash.position.z = 0.11
+  flash.renderOrder = 29
+  group.add(flash)
+
+  group.position.set(stop[0], stop[1], 0)
+  group.rotation.z = heading + Math.PI / 2
+  return { group, flashMaterial }
+}
+
+function updateSignalFlashes(materials: THREE.MeshStandardMaterial[], now: number) {
+  const pulse = 0.42 + 0.58 * ((Math.sin(now * 0.008) + 1) / 2)
+
+  materials.forEach((material) => {
+    const baseColor = material.userData.baseColor as THREE.Color | undefined
+    if (!baseColor) return
+
+    material.color.copy(baseColor).multiplyScalar(pulse)
+    material.emissive.copy(baseColor)
+    material.emissiveIntensity = 0.35 + pulse * 1.15
+    material.opacity = 0.52 + pulse * 0.42
+  })
 }
 
 function updateTrail(trail: THREE.Line, agent: SceneData['agents'][number], step: number, showTrail: boolean) {
