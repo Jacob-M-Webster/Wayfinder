@@ -17,8 +17,12 @@
     const overlay = new SignalOverlay(threeScene, sceneJson, { zUp: true })
     overlay.update(step, beaconAlive)    // whenever the step or beacon state changes
     overlay.animate(performance.now())   // every frame (drives the blink)
+    overlay.fitToView(camera, heightPx)  // every frame (badge sizing, see below)
     overlay.setVisible(on)               // toggle without rebuilding
     overlay.decisions                    // { ego: {...}, N: {...}, ... } for a HUD
+
+  Badge size: each badge has a real-world size (badgeMeters, so it shrinks as you zoom out
+  like everything else), clamped to a readable on-screen height range (badgePx, in CSS px).
 
   Internally the heads are built y-up (x, h, -y). With zUp the whole group is rotated so
   they land in a z-up world at (x, y, h), matching App.tsx.
@@ -54,8 +58,10 @@ export type OverlaySceneData = {
 export type OverlayOptions = {
   zUp?: boolean
   showTruth?: boolean
-  fixedSize?: boolean
-  badgeSize?: number
+  // Badge height in meters, and its on-screen height limits in CSS px. The "Your light" badge
+  // uses the ego values.
+  badgeMeters?: { approach: number; ego: number }
+  badgePx?: { approach: [number, number]; ego: [number, number] }
   poleHeight?: number
   font?: string
 }
@@ -77,6 +83,7 @@ type Light = {
   canvas: HTMLCanvasElement
   ctx: CanvasRenderingContext2D
   tex: THREE.CanvasTexture
+  sprite: THREE.Sprite
   key: string | null
   state: Decision | null
 }
@@ -121,6 +128,35 @@ function fitText(
   return ctx.measureText(text).width
 }
 
+/*
+  The arbiter for one light. `target` is an approach ("N"/"E"/"S"/"W") or, for the car's own
+  light, { lane } (uses the ego lane truth and model.ego).
+*/
+export function arbitrate(
+  data: OverlaySceneData, target: string | { lane: number }, step: number, beaconAlive: boolean,
+): Decision {
+  const m = data.model
+  const ego = typeof target !== 'string'
+  const truth = ego
+    ? (data.truth.lane[step] ?? {})[String(target.lane)] ?? 'UNKNOWN'
+    : (data.truth.approach[step] ?? {})[target] ?? 'UNKNOWN'
+
+  // The beacon replays the real signal timeline, so while it's alive it reports the truth.
+  if (beaconAlive && KNOWN.has(truth)) return { phase: truth, conf: 1, source: 'BEACON', truth }
+
+  let pred: ModelStep | null | undefined = null
+  if (m) pred = ego ? m.ego?.[step] : (m.approach[step] ?? {})[target]
+  const [phase, conf, committed] = pred ?? ['UNKNOWN', 0, false]
+  if (committed) return { phase, conf, source: 'MODEL', truth }
+  return { phase: 'ALL_WAY_STOP', conf, guess: phase, source: 'FALLBACK', truth }
+}
+
+/** The Waymo car's own light, or null if the scene has no ego lane. */
+export function egoDecision(data: OverlaySceneData, step: number, beaconAlive: boolean): Decision | null {
+  const lane = data.ego_lane ?? data.model?.ego_lane ?? null
+  return lane == null ? null : arbitrate(data, { lane }, step, beaconAlive)
+}
+
 export class SignalOverlay {
   readonly group = new THREE.Group()
   decisions: Record<string, Decision> = {}
@@ -130,8 +166,8 @@ export class SignalOverlay {
   private showTruth: boolean
   private font: string
   private poleHeight: number
-  private fixedSize: boolean
-  private badgeSize: number
+  private badgeMeters: NonNullable<OverlayOptions['badgeMeters']>
+  private badgePx: NonNullable<OverlayOptions['badgePx']>
   private threshold: number
   private blinkOn = true
   private lights: Light[]
@@ -142,9 +178,8 @@ export class SignalOverlay {
     this.showTruth = opts.showTruth ?? true
     this.font = opts.font ?? "'Barlow Condensed', 'Arial Narrow', sans-serif"
     this.poleHeight = opts.poleHeight ?? 5.5
-    // Badges keep a constant on-screen size (readable from any zoom) unless turned off.
-    this.fixedSize = opts.fixedSize ?? true
-    this.badgeSize = opts.badgeSize ?? 0.13 // fraction of screen height when fixedSize
+    this.badgeMeters = opts.badgeMeters ?? { approach: 3, ego: 4 }
+    this.badgePx = opts.badgePx ?? { approach: [90, 150], ego: [110, 190] }
     this.threshold = data.model?.threshold ?? 0.8
     // y-up internals -> z-up world: (x, h, -y) rotated +90deg about x becomes (x, y, h).
     if (opts.zUp) this.group.rotation.x = Math.PI / 2
@@ -176,6 +211,22 @@ export class SignalOverlay {
     for (const L of this.lights) if (L.state?.phase === 'ALL_WAY_STOP') this.setLamps(L)
   }
 
+  // Size each badge from its distance to the camera: real-world size, clamped to badgePx.
+  // Sprites use sizeAttenuation=false, so scale is in view units at depth 1 (camera.zoom applies).
+  fitToView(camera: THREE.PerspectiveCamera, viewportHeightPx: number) {
+    if (!this.group.visible || viewportHeightPx <= 0) return
+    const viewUnitsPerPx = (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / (camera.zoom * viewportHeightPx)
+    const p = new THREE.Vector3()
+    for (const L of this.lights) {
+      const ego = L.spec.kind === 'ego'
+      const [minPx, maxPx] = ego ? this.badgePx.ego : this.badgePx.approach
+      const depth = Math.max(0.1, -L.sprite.getWorldPosition(p).applyMatrix4(camera.matrixWorldInverse).z)
+      const px = (ego ? this.badgeMeters.ego : this.badgeMeters.approach) / (depth * viewUnitsPerPx)
+      const h = THREE.MathUtils.clamp(px, minPx, maxPx) * viewUnitsPerPx
+      L.sprite.scale.set(h * 2, h, 1)
+    }
+  }
+
   get visible() {
     return this.group.visible
   }
@@ -203,20 +254,8 @@ export class SignalOverlay {
 
   // ---------- decision (arbiter) ----------
   private decide(spec: LightSpec, step: number, beaconAlive: boolean): Decision {
-    const d = this.data
-    const m = d.model
-    const truth = spec.kind === 'ego'
-      ? (d.truth.lane[step] ?? {})[String(spec.lane)] ?? 'UNKNOWN'
-      : (d.truth.approach[step] ?? {})[spec.dir] ?? 'UNKNOWN'
-
-    // The beacon replays the real signal timeline, so while it's alive it reports the truth.
-    if (beaconAlive && KNOWN.has(truth)) return { phase: truth, conf: 1, source: 'BEACON', truth }
-
-    let pred: ModelStep | null | undefined = null
-    if (m) pred = spec.kind === 'ego' ? m.ego?.[step] : (m.approach[step] ?? {})[spec.dir]
-    const [phase, conf, committed] = pred ?? ['UNKNOWN', 0, false]
-    if (committed) return { phase, conf, source: 'MODEL', truth }
-    return { phase: 'ALL_WAY_STOP', conf, guess: phase, source: 'FALLBACK', truth }
+    const target = spec.kind === 'ego' && spec.lane != null ? { lane: spec.lane } : spec.dir
+    return arbitrate(this.data, target, step, beaconAlive)
   }
 
   // ---------- building ----------
@@ -287,21 +326,16 @@ export class SignalOverlay {
     const tex = new THREE.CanvasTexture(canvas)
     tex.colorSpace = THREE.SRGBColorSpace
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: tex, transparent: true, depthTest: false, sizeAttenuation: !this.fixedSize,
+      map: tex, transparent: true, depthTest: false, sizeAttenuation: false,
     }))
     sprite.renderOrder = 40
-    if (this.fixedSize) {
-      const h = this.badgeSize * (spec.kind === 'ego' ? 1.3 : 1)
-      sprite.scale.set(h * 2, h, 1)
-      sprite.center.set(0.5, 0) // sit on top of the signal head, not over it
-    } else {
-      sprite.scale.set(4.2 * s, 2.1 * s, 1)
-    }
-    sprite.position.y = head.position.y + (this.fixedSize ? 1.0 * s : 2.0 * s)
+    sprite.scale.set(0.2, 0.1, 1) // placeholder until the first fitToView
+    sprite.center.set(0.5, 0) // sit on top of the signal head, not over it
+    sprite.position.y = head.position.y + 1.0 * s
     root.add(sprite)
 
     this.group.add(root)
-    return { spec, root, lamps, canvas, ctx: canvas.getContext('2d')!, tex, key: null, state: null }
+    return { spec, root, lamps, canvas, ctx: canvas.getContext('2d')!, tex, sprite, key: null, state: null }
   }
 
   // ---------- drawing ----------

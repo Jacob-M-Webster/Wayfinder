@@ -537,3 +537,57 @@ input[type='range'] {
     display: none;
   }
 }
+
+.stage-panel {
+  position: absolute;
+  inset: 138px auto auto 16px;
+  z-index: 4;
+  display: grid;
+  gap: 10px;
+  min-inline-size: 220px;
+  padding: 10px;
+  border: 1px solid rgba(220, 229, 241, 0.12);
+  border-left: 4px solid var(--stage-color, #8a94a8);
+  border-radius: 8px;
+  background: rgba(21, 28, 40, 0.86);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(10px);
+  transition: border-color 200ms ease;
+}
+
+.stage-panel.stage-1 { --stage-color: #43d17a; }
+.stage-panel.stage-2 { --stage-color: #4aa8ff; }
+.stage-panel.stage-3 { --stage-color: #f7c948; }
+.stage-panel.stage-4 { --stage-color: #f25555; }
+
+.stage-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.stage-heading strong,
+.stage-heading small {
+  display: block;
+}
+
+.stage-heading strong {
+  font-size: 16px;
+}
+
+.stage-heading small {
+  margin-top: 2px;
+  color: rgba(220, 229, 241, 0.66);
+  font-size: 12px;
+}
+
+.stage-index {
+  display: grid;
+  place-items: center;
+  inline-size: 28px;
+  block-size: 28px;
+  border-radius: 50%;
+  background: var(--stage-color, #8a94a8);
+  color: #0b1320;
+  font-weight: 800;
+}
