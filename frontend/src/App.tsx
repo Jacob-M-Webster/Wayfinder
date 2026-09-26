@@ -6,6 +6,7 @@ import logoUrl from './assets/logo.png'
 import './App.css'
 import { AgentLegend } from './features/scenes/AgentLegend'
 import { ControlGuide } from './features/scenes/ControlGuide'
+import { LandingScreen } from './features/scenes/LandingScreen'
 import { LoadSceneDialog } from './features/scenes/LoadSceneDialog'
 import { LoadingScreen } from './features/scenes/LoadingScreen'
 import { PlaybackControls } from './features/scenes/PlaybackControls'
@@ -54,7 +55,7 @@ function App() {
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
   const [loopPlayback, setLoopPlayback] = useState(true)
   const [speedPopoverOpen, setSpeedPopoverOpen] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [controlGuideOpen, setControlGuideOpen] = useState(true)
   const [topControlsOpen, setTopControlsOpen] = useState(true)
   const [activeSceneKey, setActiveSceneKey] = useState<string | null>(null)
@@ -118,12 +119,6 @@ function App() {
     setZoom(value)
     if (threeRef.current) applyCameraZoom(threeRef.current.camera, value)
   }, [])
-
-  useEffect(() => {
-    queueMicrotask(() => {
-      void loadScene(demoScenes[0].url, `${demoScenes[0].fileName} loaded`, demoScenes[0].key)
-    })
-  }, [loadScene])
 
   useEffect(() => {
     const stageElement = stageRef.current
@@ -298,7 +293,7 @@ function App() {
   }, [sceneData])
 
   useEffect(() => {
-    overlayRef.current?.setVisible(activeScene != null)
+    overlayRef.current?.setVisible(activeScene?.overlay ?? false)
   }, [sceneData, activeScene])
 
   useEffect(() => {
@@ -350,7 +345,13 @@ function App() {
       const key = event.key.toLowerCase()
       const scene = demoScenes.find((item) => item.hotkey === key)
       if (scene) void loadScene(scene.url, `${scene.fileName} loaded`, scene.key)
-      else if (key === 'g') overrideStage({ gridUp: !gridUp })
+      else if (key === '0') {
+        // Back to the landing screen.
+        setPlaying(false)
+        setSceneData(null)
+        setActiveSceneKey(null)
+        setStep(0)
+      } else if (key === 'g') overrideStage({ gridUp: !gridUp })
       else if (key === 'b') overrideStage({ beaconAlive: !beaconAlive })
       else if (key === 'a') setAutoStage(true)
       else if (key === ' ') {
@@ -461,6 +462,8 @@ function App() {
             onSpeedChange={setPlaybackSpeed}
             onSpeedPopoverChange={setSpeedPopoverOpen}
           />
+
+          {!sceneData && <LandingScreen />}
 
           {loading && <LoadingScreen />}
 
