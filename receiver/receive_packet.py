@@ -1,34 +1,27 @@
-import subprocess
-import os
+import time
 import serial
+import pyautogui
 
-# Update to match your M5Stack's COM port (e.g., 'COM3', 'COM4')
+# Update to match your M5Stack's COM port (check Device Manager or Arduino IDE)
 COM_PORT = "COM4"
 BAUD_RATE = 115200
 
-# Directory path to your frontend project
-FRONTEND_DIR = r"C:\Users\zhiti\OneDrive - University of Florida\Wayfinder\frontend"
-
-def listen_and_start():
+def listen_and_trigger():
     print(f"Listening for outage signal on {COM_PORT}...")
     
-    # Open serial connection
+    # Open serial port (blocking mode for instant response)
     ser = serial.Serial(COM_PORT, BAUD_RATE, timeout=None)
     
     while True:
-        # Blocking read: Waits directly for incoming line with zero polling delay
+        # Blocks until a full line is received from the M5Stack
         line = ser.readline().decode('utf-8', errors='ignore').strip()
         
         if line == "OUTAGE_TRIGGER":
-            print("\n[!] Outage trigger received! Launching Vite dev server instantly...\n")
+            print("\n[!] Outage trigger received from M5Stack!")
             
-            # Launch npm run dev in your frontend folder
-            subprocess.Popen(
-                ["npm", "run", "dev"], 
-                cwd=FRONTEND_DIR, 
-                shell=True
-            )
-            break
+            # Send '2' keypress instantly
+            pyautogui.press('2')
+            print("Successfully sent keyboard input '3' to active window.\n")
 
 if __name__ == "__main__":
-    listen_and_start()
+    listen_and_trigger()
