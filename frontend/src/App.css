@@ -1132,3 +1132,20 @@ input[type='range'] {
     inset: auto auto 150px 12px;
   }
 }
+
+/* Landing: plain navy with the logo across the middle, above everything but the loader. */
+.landing-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #101722;
+}
+
+.landing-screen img {
+  display: block;
+  inline-size: min(70vw, 960px);
+  block-size: auto;
+}
