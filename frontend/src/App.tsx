@@ -10,9 +10,13 @@ import {
   FileJson,
   FolderOpen,
   Footprints,
+  Gauge,
   LoaderCircle,
   MouseLeft,
   MouseRight,
+  Pause,
+  Play,
+  Repeat,
   Upload,
   X,
   ZoomIn,
@@ -21,6 +25,7 @@ import type { IconNode } from 'lucide'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import scene55Url from '../../demo_data/scene_55.json?url'
+import logoUrl from './assets/logo.png'
 import scene20s19Url from '../../demo_data/scene_20s_19.json?url'
 import scene20s2Url from '../../demo_data/scene_20s_2.json?url'
 import './App.css'
@@ -117,8 +122,15 @@ type AgentRender = {
 type DynamicSceneState = {
   agents: AgentRender[]
   sdc: AgentRender | null
-  signalGroup: THREE.Group
+  signals: SignalRender[]
   signalMaterials: THREE.MeshStandardMaterial[]
+}
+
+type SignalRender = {
+  laneId: number
+  group: THREE.Group
+  flashMaterial: THREE.MeshStandardMaterial
+  state: string
 }
 
 const signalColors: Record<string, number> = {
@@ -202,6 +214,7 @@ function App() {
   const [zoom, setZoom] = useState(1)
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
   const [loopPlayback, setLoopPlayback] = useState(true)
+  const [speedPopoverOpen, setSpeedPopoverOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [controlGuideOpen, setControlGuideOpen] = useState(true)
   const overlayRef = useRef<SignalOverlay | null>(null)
@@ -566,30 +579,36 @@ function App() {
         <div className="stage" ref={stageRef}>
           <div className="hover-dot" ref={hoverDotRef} aria-hidden="true" />
 
-          <div className={`guide-shell ${controlGuideOpen ? 'is-open' : 'is-closed'}`}>
-            <section className="control-guide" aria-label="Application controls" aria-hidden={!controlGuideOpen}>
-              <div className="guide-row">
-                <Icon icon={MouseRight} />
-                <span>Right click to Pan</span>
-              </div>
-              <div className="guide-row">
-                <Icon icon={MouseLeft} />
-                <span>Left click to Rotate</span>
-              </div>
-              <div className="guide-row">
-                <Icon icon={ZoomIn} />
-                <span>Scroll to Zoom</span>
-              </div>
-            </section>
-            <button
-              type="button"
-              className="guide-toggle"
-              aria-label={controlGuideOpen ? 'Hide controls guide' : 'Show controls guide'}
-              aria-expanded={controlGuideOpen}
-              onClick={() => setControlGuideOpen((value) => !value)}
-            >
-              <Icon icon={controlGuideOpen ? ChevronLeft : ChevronRight} />
-            </button>
+          <div className="brand-stack">
+            <div className="app-logo" aria-label="SDC">
+              <img src={logoUrl} alt="SDC" />
+            </div>
+
+            <div className={`guide-shell ${controlGuideOpen ? 'is-open' : 'is-closed'}`}>
+              <section className="control-guide" aria-label="Application controls" aria-hidden={!controlGuideOpen}>
+                <div className="guide-row">
+                  <Icon icon={MouseRight} />
+                  <span>Right click to Pan</span>
+                </div>
+                <div className="guide-row">
+                  <Icon icon={MouseLeft} />
+                  <span>Left click to Rotate</span>
+                </div>
+                <div className="guide-row">
+                  <Icon icon={ZoomIn} />
+                  <span>Scroll to Zoom</span>
+                </div>
+              </section>
+              <button
+                type="button"
+                className="guide-toggle"
+                aria-label={controlGuideOpen ? 'Hide controls guide' : 'Show controls guide'}
+                aria-expanded={controlGuideOpen}
+                onClick={() => setControlGuideOpen((value) => !value)}
+              >
+                <Icon icon={controlGuideOpen ? ChevronLeft : ChevronRight} />
+              </button>
+            </div>
           </div>
 
           <div className="scene-toolbar" aria-label="Scene controls">
@@ -652,7 +671,7 @@ function App() {
           <div className="controls" aria-label="Playback controls">
             <button
               type="button"
-              className="play-button"
+              className="icon-control play-button"
               onClick={() => {
                 if (!playing && sceneData && step >= sceneData.num_steps - 1 && !loopPlayback) {
                   setStep(0)
@@ -660,8 +679,10 @@ function App() {
                 setPlaying((value) => !value)
               }}
               disabled={!sceneData}
+              aria-label={playing ? 'Pause timeline' : 'Play timeline'}
+              title={playing ? 'Pause' : 'Play'}
             >
-              {playing ? 'Pause' : 'Play'}
+              <Icon icon={playing ? Pause : Play} />
             </button>
             <span className="time-readout">{timeLabel}</span>
             <input
@@ -677,26 +698,52 @@ function App() {
               disabled={!sceneData}
             />
             <span className="frame-readout">{frameLabel}</span>
-            <label className="speed-control">
-              <span>Speed {playbackSpeed.toFixed(2)}x</span>
-              <input
-                type="range"
-                min="0.25"
-                max="3"
-                step="0.25"
-                value={playbackSpeed}
-                onChange={(event) => setPlaybackSpeed(Number(event.target.value))}
+            <div
+              className="speed-menu"
+              onBlur={(event) => {
+                if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+                  setSpeedPopoverOpen(false)
+                }
+              }}
+            >
+              <button
+                type="button"
+                className="speed-trigger"
+                onClick={() => setSpeedPopoverOpen((value) => !value)}
                 disabled={!sceneData}
-              />
-            </label>
-            <label className="toggle-row">
-              <input
-                type="checkbox"
-                checked={loopPlayback}
-                onChange={(event) => setLoopPlayback(event.target.checked)}
-              />
-              Loop
-            </label>
+                aria-label={`Playback speed ${playbackSpeed.toFixed(2)}x`}
+                aria-expanded={speedPopoverOpen}
+              >
+                <Icon icon={Gauge} />
+                <span>{playbackSpeed.toFixed(2)}x</span>
+              </button>
+              {speedPopoverOpen && (
+                <div className="speed-popover" role="dialog" aria-label="Playback speed">
+                  <span>Speed</span>
+                  <input
+                    type="range"
+                    min="0.25"
+                    max="3"
+                    step="0.25"
+                    value={playbackSpeed}
+                    onChange={(event) => setPlaybackSpeed(Number(event.target.value))}
+                    disabled={!sceneData}
+                    aria-label="Playback speed"
+                  />
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              className={`icon-control loop-button${loopPlayback ? ' is-active' : ''}`}
+              onClick={() => setLoopPlayback((value) => !value)}
+              disabled={!sceneData}
+              aria-pressed={loopPlayback}
+              aria-label={loopPlayback ? 'Disable loop playback' : 'Enable loop playback'}
+              title="Loop"
+            >
+              <Icon icon={Repeat} />
+            </button>
             <span className="time-readout end">{totalTime}</span>
           </div>
 
@@ -871,10 +918,25 @@ function buildDynamicScene(group: THREE.Group, sceneData: SceneData): DynamicSce
     return { agent, box, outline, headingIcon, trail }
   })
 
-  const signalGroup = new THREE.Group()
-  group.add(signalGroup)
+  const signalLayouts = getSignalBarLayouts(sceneData.signals)
+  const signals = sceneData.signals.map((signal, index) => {
+    const layout = signalLayouts[index]
+    const signalBar = makeTrafficFloorBar(layout.stop, layout.heading, 'UNKNOWN')
+    group.add(signalBar.group)
 
-  return { agents, sdc: agents.find(({ agent }) => agent.is_sdc) ?? null, signalGroup, signalMaterials: [] }
+    return {
+      laneId: signal.lane_id,
+      state: 'UNKNOWN',
+      ...signalBar,
+    }
+  })
+
+  return {
+    agents,
+    sdc: agents.find(({ agent }) => agent.is_sdc) ?? null,
+    signals,
+    signalMaterials: signals.map((signal) => signal.flashMaterial),
+  }
 }
 
 function updateDynamicScene(
@@ -910,16 +972,12 @@ function updateDynamicScene(
     updateTrail(trail, agent, step, showTrails)
   })
 
-  clearGroup(state.signalGroup)
-  state.signalMaterials = []
-  const signalLayouts = getSignalBarLayouts(sceneData.signals)
-  sceneData.signals.forEach((signal, index) => {
-    // Ground bars are the physical light: no power, no light.
-    const signalState = gridUp ? truth[String(signal.lane_id)] ?? 'UNKNOWN' : 'DARK'
-    const layout = signalLayouts[index]
-    const { group, flashMaterial } = makeTrafficFloorBar(layout.stop, layout.heading, signalState)
-    state.signalGroup.add(group)
-    if (gridUp) state.signalMaterials.push(flashMaterial)
+  state.signals.forEach((signal) => {
+    const signalState = gridUp ? truth[String(signal.laneId)] ?? 'UNKNOWN' : 'DARK'
+    if (signal.state === signalState) return
+
+    signal.state = signalState
+    setSignalMaterialState(signal.flashMaterial, signalState)
   })
 }
 
@@ -1295,6 +1353,14 @@ function makeTrafficFloorBar(stop: Point, heading: number, state: string) {
   group.position.set(stop[0], stop[1], 0)
   group.rotation.z = heading + Math.PI / 2
   return { group, flashMaterial }
+}
+
+function setSignalMaterialState(material: THREE.MeshStandardMaterial, state: string) {
+  const activeColor = signalColors[state] ?? signalColors.UNKNOWN
+  const color = new THREE.Color(activeColor)
+  material.userData.baseColor = color
+  material.color.copy(color)
+  material.emissive.copy(color)
 }
 
 function updateSignalFlashes(materials: THREE.MeshStandardMaterial[], now: number) {
