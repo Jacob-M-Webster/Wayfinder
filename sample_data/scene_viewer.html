@@ -1,0 +1,129 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Scene viewer (starter)</title>
+<style>
+  body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #ddd; }
+  #bar { display: flex; gap: 12px; align-items: center; padding: 8px 12px; background: #1b1b1b; }
+  #info { font-family: ui-monospace, monospace; white-space: pre; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <input type="file" id="file" accept=".json">
+  <button id="play">▶</button>
+  <input type="range" id="slider" min="0" max="0" value="0" style="flex:1">
+  <span id="info">load scene.json</span>
+</div>
+<canvas id="c"></canvas>
+
+<script>
+const COLORS = { STOP: "#e53935", CAUTION: "#fbc02d", GO: "#43a047", UNKNOWN: "#777", NONE: "#444" };
+const AGENT  = { vehicle: "#4fc3f7", pedestrian: "#ffb74d", cyclist: "#ba68c8", other: "#aaa" };
+
+const c = document.getElementById("c"), ctx = c.getContext("2d");
+const slider = document.getElementById("slider"), info = document.getElementById("info");
+let scene = null, step = 0, timer = null, view = { s: 1, ox: 0, oy: 0 };
+
+// ---- 1. Load the JSON --------------------------------------------------------
+document.getElementById("file").onchange = e => {
+  const r = new FileReader();
+  r.onload = () => {
+    scene = JSON.parse(r.result);
+    slider.max = scene.num_steps - 1;
+    step = 0; slider.value = 0;
+    fit(); draw();
+  };
+  r.readAsText(e.target.files[0]);
+};
+
+// ---- 2. Fit world coordinates (meters) to the canvas ---------------------------
+function fit() {
+  if (!scene) return;
+  let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
+  for (const l of scene.map.lanes) for (const [x, y] of l.points) {
+    minx = Math.min(minx, x); maxx = Math.max(maxx, x);
+    miny = Math.min(miny, y); maxy = Math.max(maxy, y);
+  }
+  const s = 0.9 * Math.min(c.width / (maxx - minx), c.height / (maxy - miny));
+  view = { s, ox: c.width / 2 - s * (minx + maxx) / 2, oy: c.height / 2 + s * (miny + maxy) / 2 };
+}
+
+function resize() {
+  c.width = innerWidth;
+  c.height = innerHeight - document.getElementById("bar").offsetHeight;
+  fit(); draw();
+}
+addEventListener("resize", resize);
+
+function path(pts, close) {
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+  if (close) ctx.closePath();
+}
+
+// ---- 3. Draw one step ----------------------------------------------------------
+function draw() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#111"; ctx.fillRect(0, 0, c.width, c.height);
+  if (!scene) return;
+
+  // World transform: after this, draw directly in meters. The -s flips y so +y is up (north).
+  ctx.setTransform(view.s, 0, 0, -view.s, view.ox, view.oy);
+  const px = 1 / view.s;  // one screen pixel, in meters
+
+  // Static map
+  ctx.lineWidth = 2 * px; ctx.strokeStyle = "#555";
+  for (const e of scene.map.road_edges) { path(e.points); ctx.stroke(); }
+  ctx.fillStyle = "rgba(255,255,255,0.08)";
+  for (const cw of scene.map.crosswalks) { path(cw.points, true); ctx.fill(); }
+  ctx.lineWidth = px;
+  for (const l of scene.map.lanes) { ctx.strokeStyle = l.controlled ? "#666" : "#333"; path(l.points); ctx.stroke(); }
+
+  // Stop bars, colored by the true light for that lane at this step
+  const truth = scene.truth.lane[step] || {};
+  ctx.lineWidth = 0.6;
+  for (const sig of scene.signals) {
+    const state = truth[String(sig.lane_id)] || "UNKNOWN";
+    const [x, y] = sig.stop;
+    const nx = -Math.sin(sig.heading) * 1.6, ny = Math.cos(sig.heading) * 1.6;  // perpendicular, ~lane width
+    ctx.strokeStyle = COLORS[state];
+    ctx.beginPath(); ctx.moveTo(x - nx, y - ny); ctx.lineTo(x + nx, y + ny); ctx.stroke();
+  }
+
+  // Agents: rotated rectangles. null state = not visible this step.
+  for (const a of scene.agents) {
+    const st = a.states[step];
+    if (!st) continue;
+    const [x, y, h] = st;
+    ctx.save();
+    ctx.translate(x, y); ctx.rotate(h);
+    ctx.fillStyle = a.is_sdc ? "#ffffff" : (AGENT[a.type] || AGENT.other);
+    ctx.fillRect(-a.length / 2, -a.width / 2, a.length, a.width);
+    ctx.restore();
+  }
+
+  // Status text: true phase per approach
+  const ap = scene.truth.approach[step];
+  info.textContent = `t=${(step / scene.hz).toFixed(1)}s  ` +
+    scene.approach_order.map(k => `${k}=${ap[k]}`).join("  ");
+}
+
+// ---- 4. Playback ---------------------------------------------------------------
+slider.oninput = () => { step = +slider.value; draw(); };
+document.getElementById("play").onclick = e => {
+  if (!scene) return;
+  if (timer) { clearInterval(timer); timer = null; e.target.textContent = "▶"; return; }
+  e.target.textContent = "⏸";
+  timer = setInterval(() => {
+    step = (step + 1) % scene.num_steps;
+    slider.value = step; draw();
+  }, 1000 / scene.hz);
+};
+
+resize();
+</script>
+</body>
+</html>
