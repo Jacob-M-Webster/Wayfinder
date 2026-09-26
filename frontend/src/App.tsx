@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
+import { ChevronLeft, ChevronRight, LoaderCircle, MouseLeft, MouseRight, ZoomIn } from 'lucide'
+import type { IconNode } from 'lucide'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import './App.css'
@@ -78,6 +80,7 @@ const agentColors: Record<string, number> = {
 const maxPolarAngle = (82 * Math.PI) / 180
 const minPolarAngle = (10 * Math.PI) / 180
 const sceneBackground = 0x101722
+const initialFocusZoom = 1.65
 
 function App() {
   const stageRef = useRef<HTMLDivElement | null>(null)
@@ -86,34 +89,50 @@ function App() {
   const [sceneData, setSceneData] = useState<SceneData | null>(null)
   const [step, setStep] = useState(0)
   const [playing, setPlaying] = useState(false)
-  const [status, setStatus] = useState('Loading sample scene...')
-  const [showTrails, setShowTrails] = useState(true)
+  const [zoom, setZoom] = useState(1)
+  const [playbackSpeed, setPlaybackSpeed] = useState(1)
+  const [loopPlayback, setLoopPlayback] = useState(true)
+  const [loading, setLoading] = useState(true)
+  const [controlGuideOpen, setControlGuideOpen] = useState(true)
 
   const bounds = useMemo(() => (sceneData ? getBounds(sceneData) : null), [sceneData])
-  const visibleAgents = useMemo(
-    () => sceneData?.agents.filter((agent) => agent.states[step]).length ?? 0,
-    [sceneData, step],
-  )
 
   const loadScene = useCallback(async (url: string, successMessage: string) => {
     try {
-      setStatus('Loading scene...')
+      setLoading(true)
       const response = await fetch(url)
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const data = (await response.json()) as SceneData
       setSceneData(data)
       setStep(0)
       setPlaying(false)
-      setStatus(successMessage)
+      console.info(successMessage)
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Unable to load scene')
+      console.error(error instanceof Error ? error.message : 'Unable to load scene')
+    } finally {
+      setLoading(false)
     }
   }, [])
 
-  const fitScene = useCallback(() => {
+  const recenterScene = useCallback(() => {
     if (!threeRef.current || !bounds) return
+    if (sceneData && focusSdcCamera(threeRef.current.camera, threeRef.current.controls, sceneData, 0)) {
+      setZoom(initialFocusZoom)
+      applyCameraZoom(threeRef.current.camera, initialFocusZoom)
+      return
+    }
+
     fitCamera(threeRef.current.camera, threeRef.current.controls, bounds)
-  }, [bounds])
+    setZoom(1)
+    applyCameraZoom(threeRef.current.camera, 1)
+  }, [bounds, sceneData])
+
+  const changeZoom = useCallback((value: number) => {
+    setZoom(value)
+    if (threeRef.current) {
+      applyCameraZoom(threeRef.current.camera, value)
+    }
+  }, [])
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -211,22 +230,35 @@ function App() {
     const { staticGroup, camera, controls } = threeRef.current
     clearGroup(staticGroup)
     buildStaticScene(staticGroup, sceneData, bounds)
-    fitCamera(camera, controls, bounds)
+    if (focusSdcCamera(camera, controls, sceneData, 0)) {
+      setZoom(initialFocusZoom)
+      applyCameraZoom(camera, initialFocusZoom)
+    } else {
+      fitCamera(camera, controls, bounds)
+      applyCameraZoom(camera, zoom)
+    }
   }, [sceneData, bounds])
 
   useEffect(() => {
     if (!threeRef.current || !sceneData) return
     const { dynamicGroup } = threeRef.current
     clearGroup(dynamicGroup)
-    buildDynamicScene(dynamicGroup, sceneData, step, showTrails)
-  }, [sceneData, step, showTrails])
+    buildDynamicScene(dynamicGroup, sceneData, step, true)
+  }, [sceneData, step])
 
   useEffect(() => {
     if (!playing || !sceneData) return
 
     playTimerRef.current = window.setInterval(() => {
-      setStep((current) => (current + 1) % sceneData.num_steps)
-    }, 1000 / sceneData.hz)
+      setStep((current) => {
+        const next = current + 1
+        if (next < sceneData.num_steps) return next
+        if (loopPlayback) return 0
+
+        window.setTimeout(() => setPlaying(false), 0)
+        return current
+      })
+    }, 1000 / (sceneData.hz * playbackSpeed))
 
     return () => {
       if (playTimerRef.current) {
@@ -234,12 +266,13 @@ function App() {
         playTimerRef.current = null
       }
     }
-  }, [playing, sceneData])
+  }, [playing, sceneData, loopPlayback, playbackSpeed])
 
   function handleFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return
 
+    setLoading(true)
     const reader = new FileReader()
     reader.onload = () => {
       try {
@@ -247,121 +280,134 @@ function App() {
         setSceneData(data)
         setStep(0)
         setPlaying(false)
-        setStatus(`${file.name} loaded`)
+        console.info(`${file.name} loaded`)
       } catch {
-        setStatus('That file is not valid scene JSON')
+        console.error('That file is not valid scene JSON')
+      } finally {
+        setLoading(false)
       }
+    }
+    reader.onerror = () => {
+      console.error('Unable to read that file')
+      setLoading(false)
     }
     reader.readAsText(file)
   }
 
-  const approaches = sceneData?.truth.approach[step] ?? {}
   const timeLabel = sceneData ? `${(step / sceneData.hz).toFixed(1)}s` : '0.0s'
   const totalTime = sceneData ? `${((sceneData.num_steps - 1) / sceneData.hz).toFixed(1)}s` : '0.0s'
+  const frameLabel = sceneData ? `${step + 1}/${sceneData.num_steps}` : '0/0'
 
   return (
     <main className="app-shell">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">Waymo scene</p>
-          <h1>Three.js Scene Visualizer</h1>
-        </div>
-        <div className="topbar-actions">
-          <label className="file-button">
-            <input type="file" accept=".json,application/json" onChange={handleFile} />
-            Load JSON
-          </label>
-          <button type="button" onClick={fitScene} disabled={!sceneData}>
-            Fit
-          </button>
-        </div>
-      </header>
-
-      <section className="viewer-layout">
-        <aside className="scene-panel">
-          <div className="metric-grid">
-            <div>
-              <span>Scenario</span>
-              <strong>{sceneData?.scenario_id ?? '-'}</strong>
-            </div>
-            <div>
-              <span>Frame</span>
-              <strong>
-                {sceneData ? step + 1 : 0}/{sceneData?.num_steps ?? 0}
-              </strong>
-            </div>
-            <div>
-              <span>Time</span>
-              <strong>
-                {timeLabel}/{totalTime}
-              </strong>
-            </div>
-            <div>
-              <span>Visible agents</span>
-              <strong>{visibleAgents}</strong>
-            </div>
-          </div>
-
-          <div className="approach-list">
-            {sceneData?.approach_order.map((approach) => (
-              <div key={approach} className="approach-row">
-                <span>{approach}</span>
-                <strong data-state={approaches[approach] ?? 'UNKNOWN'}>
-                  {approaches[approach] ?? 'UNKNOWN'}
-                </strong>
+      <section className="stage-wrap">
+        <div className="stage" ref={stageRef}>
+          <div className={`guide-shell ${controlGuideOpen ? 'is-open' : 'is-closed'}`}>
+            <section className="control-guide" aria-label="Application controls" aria-hidden={!controlGuideOpen}>
+              <div className="guide-row">
+                <Icon icon={MouseRight} />
+                <span>Right click to Pan</span>
               </div>
-            ))}
+              <div className="guide-row">
+                <Icon icon={MouseLeft} />
+                <span>Left click to Rotate</span>
+              </div>
+              <div className="guide-row">
+                <Icon icon={ZoomIn} />
+                <span>Scroll to Zoom</span>
+              </div>
+            </section>
+            <button
+              type="button"
+              className="guide-toggle"
+              aria-label={controlGuideOpen ? 'Hide controls guide' : 'Show controls guide'}
+              aria-expanded={controlGuideOpen}
+              onClick={() => setControlGuideOpen((value) => !value)}
+            >
+              <Icon icon={controlGuideOpen ? ChevronLeft : ChevronRight} />
+            </button>
           </div>
 
-          <div className="legend">
-            <span>
-              <i className="legend-agent vehicle" /> Vehicle
-            </span>
-            <span>
-              <i className="legend-agent pedestrian" /> Pedestrian
-            </span>
-            <span>
-              <i className="legend-agent cyclist" /> Cyclist
-            </span>
-            <span>
-              <i className="legend-signal go" /> Go
-            </span>
-            <span>
-              <i className="legend-signal stop" /> Stop
-            </span>
+          <div className="scene-toolbar" aria-label="Scene controls">
+            <label className="file-button">
+              <input type="file" accept=".json,application/json" onChange={handleFile} />
+              Load JSON
+            </label>
+            <button type="button" onClick={recenterScene} disabled={!sceneData}>
+              Recenter
+            </button>
+            <label className="zoom-control">
+              <span>Zoom</span>
+              <input
+                type="range"
+                min="0.5"
+                max="2.5"
+                step="0.05"
+                value={zoom}
+                onChange={(event) => changeZoom(Number(event.target.value))}
+                disabled={!sceneData}
+              />
+            </label>
           </div>
 
-          <p className="status">{status}</p>
-        </aside>
-
-        <section className="stage-wrap">
-          <div className="stage" ref={stageRef} />
-
-          <div className="controls">
-            <button type="button" className="play-button" onClick={() => setPlaying((value) => !value)} disabled={!sceneData}>
+          <div className="controls" aria-label="Playback controls">
+            <button
+              type="button"
+              className="play-button"
+              onClick={() => {
+                if (!playing && sceneData && step >= sceneData.num_steps - 1 && !loopPlayback) {
+                  setStep(0)
+                }
+                setPlaying((value) => !value)
+              }}
+              disabled={!sceneData}
+            >
               {playing ? 'Pause' : 'Play'}
             </button>
+            <span className="time-readout">{timeLabel}</span>
             <input
               type="range"
               min="0"
               max={Math.max(0, (sceneData?.num_steps ?? 1) - 1)}
               value={step}
+              aria-label="Playback timeline"
               onChange={(event) => {
                 setPlaying(false)
                 setStep(Number(event.target.value))
               }}
               disabled={!sceneData}
             />
+            <span className="frame-readout">{frameLabel}</span>
+            <label className="speed-control">
+              <span>Speed {playbackSpeed.toFixed(2)}x</span>
+              <input
+                type="range"
+                min="0.25"
+                max="3"
+                step="0.25"
+                value={playbackSpeed}
+                onChange={(event) => setPlaybackSpeed(Number(event.target.value))}
+                disabled={!sceneData}
+              />
+            </label>
             <label className="toggle-row">
               <input
                 type="checkbox"
-                checked={showTrails}
-                onChange={(event) => setShowTrails(event.target.checked)}
+                checked={loopPlayback}
+                onChange={(event) => setLoopPlayback(event.target.checked)}
               />
-              Trails
+              Loop
             </label>
+            <span className="time-readout end">{totalTime}</span>
           </div>
-        </section>
+
+          {loading && (
+            <div className="loading-screen" role="status" aria-live="polite">
+              <Icon icon={LoaderCircle} className="loading-icon" />
+              <span>Loading scene</span>
+            </div>
+          )}
+        </div>
       </section>
     </main>
   )
@@ -487,6 +533,46 @@ function fitCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls, bou
   camera.position.set(center.x - distance * 0.58, center.y - distance * 0.72, distance * 0.62)
   controls.target.copy(center)
   controls.update()
+}
+
+function focusSdcCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls, sceneData: SceneData, step: number) {
+  const sdc = sceneData.agents.find((agent) => agent.is_sdc)
+  const state = sdc?.states[step] ?? sdc?.states.find((agentState): agentState is [number, number, number] => Boolean(agentState))
+  if (!state) return false
+
+  const [x, y, heading] = state
+  const center = new THREE.Vector3(x, y, 0)
+  const distance = 34
+  camera.position.set(
+    x - Math.cos(heading) * distance * 0.55 - Math.sin(heading) * distance * 0.46,
+    y - Math.sin(heading) * distance * 0.55 + Math.cos(heading) * distance * 0.46,
+    distance * 0.72,
+  )
+  controls.target.copy(center)
+  controls.update()
+  return true
+}
+
+function applyCameraZoom(camera: THREE.PerspectiveCamera, zoom: number) {
+  camera.zoom = zoom
+  camera.updateProjectionMatrix()
+}
+
+function Icon({ icon, className }: { icon: IconNode; className?: string }) {
+  return (
+    <svg
+      className={className}
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {icon.map(([tag, attrs], index) => createElement(tag, { ...attrs, key: index }))}
+    </svg>
+  )
 }
 
 function makeLine(points: Point[], material: THREE.LineBasicMaterial, z: number) {
