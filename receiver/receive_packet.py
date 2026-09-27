@@ -1,34 +1,46 @@
-import subprocess
-import os
+import time
 import serial
+import pyautogui
 
-# Update to match your M5Stack's COM port (e.g., 'COM3', 'COM4')
+# Update to match your M5Stack's COM port
 COM_PORT = "COM4"
 BAUD_RATE = 115200
 
-# Directory path to your frontend project
-FRONTEND_DIR = r"C:\Users\zhiti\OneDrive - University of Florida\Wayfinder\frontend"
-
-def listen_and_start():
-    print(f"Listening for outage signal on {COM_PORT}...")
+def listen_and_trigger():
+    print(f"Connecting to {COM_PORT}...")
     
-    # Open serial connection
-    ser = serial.Serial(COM_PORT, BAUD_RATE, timeout=None)
+    # Open serial port with DTR/RTS disabled to prevent M5Stack reset/hangs
+    ser = serial.Serial()
+    ser.port = COM_PORT
+    ser.baudrate = BAUD_RATE
+    ser.timeout = None
+    ser.dtr = False
+    ser.rts = False
+    ser.open()
+    
+    print(f"Listening for packets on {COM_PORT}...")
     
     while True:
-        # Blocking read: Waits directly for incoming line with zero polling delay
-        line = ser.readline().decode('utf-8', errors='ignore').strip()
-        
-        if line == "OUTAGE_TRIGGER":
-            print("\n[!] Outage trigger received! Launching Vite dev server instantly...\n")
+        try:
+            # Reads incoming line from M5Stack
+            line = ser.readline().decode('utf-8', errors='ignore').strip()
             
-            # Launch npm run dev in your frontend folder
-            subprocess.Popen(
-                ["npm", "run", "dev"], 
-                cwd=FRONTEND_DIR, 
-                shell=True
-            )
+            if not line:
+                continue
+                
+            print(f"Received raw packet: {line}")
+            
+            if line == "SCENE_1":
+                print("[!] Sequence Start detected -> Triggering Scene 1")
+                pyautogui.press('1')
+                
+            elif line == "SCENE_2":
+                print("[!] Outage detected -> Triggering Scene 3"1)
+                pyautogui.press('2')
+                
+        except Exception as e:
+            print(f"Serial read error: {e}")
             break
 
 if __name__ == "__main__":
-    listen_and_start()
+    listen_and_trigger()

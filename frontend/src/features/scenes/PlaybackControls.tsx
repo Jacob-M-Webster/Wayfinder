@@ -1,4 +1,5 @@
 import { Gauge, Pause, Play, Repeat } from 'lucide'
+import type { CSSProperties } from 'react'
 import { Icon } from '../../components/Icon'
 
 type PlaybackControlsProps = {
@@ -12,6 +13,8 @@ type PlaybackControlsProps = {
   timeLabel: string
   totalTime: string
   frameLabel: string
+  timelineGradient?: string
+  currentTimelineState: 'stop' | 'go' | null
   onPlayPause: () => void
   onStepChange: (step: number) => void
   onLoopChange: (loop: boolean) => void
@@ -30,6 +33,8 @@ export function PlaybackControls({
   timeLabel,
   totalTime,
   frameLabel,
+  timelineGradient,
+  currentTimelineState,
   onPlayPause,
   onStepChange,
   onLoopChange,
@@ -49,15 +54,24 @@ export function PlaybackControls({
         <Icon icon={playing ? Pause : Play} />
       </button>
       <span className="time-readout">{timeLabel}</span>
-      <input
-        type="range"
-        min="0"
-        max={maxStep}
-        value={step}
-        aria-label="Playback timeline"
-        onChange={(event) => onStepChange(Number(event.target.value))}
-        disabled={!sceneLoaded}
-      />
+      <div className="timeline-visualizer">
+        <input
+          className="timeline-range"
+          type="range"
+          min="0"
+          max={maxStep}
+          value={step}
+          style={{ '--timeline-gradient': timelineGradient } as CSSProperties}
+          aria-label="Playback timeline"
+          aria-valuetext={`${frameLabel}, ${currentTimelineState === 'stop' ? 'stopped' : currentTimelineState === 'go' ? 'able to go' : 'state unknown'}`}
+          onChange={(event) => onStepChange(Number(event.target.value))}
+          disabled={!sceneLoaded}
+        />
+        <div className="timeline-key" aria-hidden="true">
+          <span><i className="timeline-key-stop" />Stopped</span>
+          <span><i className="timeline-key-go" />Able to go</span>
+        </div>
+      </div>
       <span className="frame-readout">{frameLabel}</span>
       <div
         className="speed-menu"

@@ -119,8 +119,17 @@ button {
   pointer-events: auto;
 }
 
-.top-right-box {
+.top-right-stack {
   flex: 1 1 720px;
+  min-inline-size: 0;
+  display: grid;
+  justify-items: end;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.top-right-box {
+  inline-size: 100%;
   min-inline-size: 0;
   display: grid;
   justify-items: end;
@@ -128,18 +137,77 @@ button {
   pointer-events: auto;
 }
 
+.top-status-box {
+  pointer-events: none;
+}
+
 .top-controls-toggle {
   display: none;
 }
 
 .scene-toolbar {
-  inline-size: min(820px, 100%);
+  inline-size: min(900px, 100%);
   display: grid;
-  grid-template-columns: minmax(240px, max-content) auto auto;
+  grid-template-columns: minmax(240px, 1fr) auto max-content;
   align-items: center;
   justify-items: stretch;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.camera-actions {
+  min-inline-size: 0;
+  display: grid;
+  grid-template-columns: auto minmax(126px, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.camera-actions > button {
+  min-inline-size: 0;
+}
+
+.camera-lock-toggle {
+  inline-size: 100%;
+  justify-content: flex-start;
+  gap: 7px;
+  padding-inline: 10px;
+}
+
+.camera-lock-toggle > span:not(.camera-lock-state) {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.camera-lock-toggle[aria-pressed='true'] {
+  border-color: rgba(88, 199, 247, 0.52);
+  background: rgba(88, 199, 247, 0.12);
+  color: #58c7f7;
+}
+
+.camera-lock-toggle[aria-pressed='false'] {
+  border-color: rgba(220, 229, 241, 0.18);
+  background: rgba(21, 28, 40, 0.72);
+  color: #dce5f1;
+}
+
+.camera-lock-state {
+  margin-inline-start: auto;
+  min-inline-size: 32px;
+  border-radius: 999px;
+  padding: 4px 7px;
+  background: rgba(11, 19, 32, 0.18);
+  color: currentColor;
+  font: 800 11px/1 var(--mono);
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.camera-lock-toggle[aria-pressed='false'] .camera-lock-state {
+  background: rgba(220, 229, 241, 0.12);
+  color: #aeb9c9;
 }
 
 .app-logo {
@@ -303,6 +371,7 @@ button {
   background: rgba(246, 248, 251, 0.94);
   color: #17202f;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  cursor: pointer;
 }
 
 .scene-picker > svg {
@@ -310,7 +379,17 @@ button {
   block-size: 17px;
 }
 
-.scene-picker span {
+.scene-picker-value {
+  min-inline-size: 0;
+  max-inline-size: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #17202f;
+  font: 800 14px/1 var(--sans);
+}
+
+.scene-picker span:not(.scene-picker-value) {
   font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
@@ -319,18 +398,19 @@ button {
 }
 
 .scene-picker select {
-  min-inline-size: 0;
-  max-inline-size: 340px;
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  inline-size: 100%;
+  block-size: 100%;
   border: 0;
   appearance: none;
   background: transparent;
-  color: #17202f;
-  font: 800 14px/1 var(--sans);
+  color: transparent;
+  font: inherit;
   outline: none;
   cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  opacity: 0;
 }
 
 .scene-picker select:disabled {
@@ -346,15 +426,90 @@ input[type='range'] {
   accent-color: #58c7f7;
 }
 
+.timeline-visualizer {
+  display: grid;
+  min-inline-size: 0;
+  gap: 4px;
+}
+
+.timeline-range {
+  block-size: 18px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.timeline-range::-webkit-slider-runnable-track {
+  block-size: 6px;
+  border-radius: 999px;
+  background: var(--timeline-gradient, #687384);
+}
+
+.timeline-range::-moz-range-track {
+  block-size: 6px;
+  border-radius: 999px;
+  background: var(--timeline-gradient, #687384);
+}
+
+.timeline-range::-webkit-slider-thumb {
+  inline-size: 14px;
+  block-size: 14px;
+  margin-block-start: -4px;
+  appearance: none;
+  border: 2px solid #f4f8ff;
+  border-radius: 50%;
+  background: #58c7f7;
+  box-shadow: 0 0 0 2px rgba(13, 20, 30, 0.72);
+}
+
+.timeline-range::-moz-range-thumb {
+  inline-size: 10px;
+  block-size: 10px;
+  border: 2px solid #f4f8ff;
+  border-radius: 50%;
+  background: #58c7f7;
+  box-shadow: 0 0 0 2px rgba(13, 20, 30, 0.72);
+}
+
+.timeline-key {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  color: #aeb9c9;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.timeline-key span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.timeline-key i {
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 50%;
+}
+
+.timeline-key-stop {
+  background: #f25555;
+}
+
+.timeline-key-go {
+  background: #25c58a;
+}
+
 .agent-legend {
   position: absolute;
-  inset: 50% 16px auto auto;
+  inset: auto auto 92px 16px;
   z-index: 4;
   display: grid;
   gap: 7px;
   min-inline-size: 150px;
   max-inline-size: calc(100% - 32px);
-  transform: translateY(-50%);
   padding: 10px;
   border: 1px solid rgba(220, 229, 241, 0.12);
   border-radius: 8px;
@@ -380,16 +535,15 @@ input[type='range'] {
   block-size: 24px;
   display: inline-grid;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 6px;
-  background: var(--legend-color);
-  color: #111923;
-  box-shadow: 0 0 16px color-mix(in srgb, var(--legend-color), transparent 68%);
+  border: 0;
+  background: transparent;
+  color: var(--legend-color);
 }
 
 .legend-swatch svg {
   inline-size: 15px;
   block-size: 15px;
+  stroke: currentColor;
 }
 
 .controls {
@@ -701,7 +855,7 @@ input[type='range'] {
     grid-template-columns: auto minmax(0, max-content) auto;
   }
 
-  .scene-picker span {
+  .scene-picker span:not(.scene-picker-value) {
     display: none;
   }
 
@@ -717,16 +871,26 @@ input[type='range'] {
     inset-inline: 10px;
   }
 
+  .top-right-stack,
   .top-right-box {
     justify-items: end;
   }
 
   .scene-toolbar {
     inline-size: min(620px, 100%);
-    grid-template-columns: minmax(180px, 1fr) auto auto;
+    grid-template-columns: minmax(180px, 1fr) auto;
   }
 
-  .scene-picker select {
+  .camera-actions {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+
+  .zoom-control {
+    grid-row: 3;
+  }
+
+  .scene-picker-value {
     max-inline-size: 250px;
   }
 }
@@ -739,10 +903,10 @@ input[type='range'] {
 
   .scene-toolbar {
     inline-size: min(520px, 100%);
-    grid-template-columns: minmax(150px, 1fr) auto auto;
+    grid-template-columns: minmax(150px, 1fr) auto;
   }
 
-  .scene-picker select {
+  .scene-picker-value {
     max-inline-size: 180px;
   }
 
@@ -765,7 +929,7 @@ input[type='range'] {
   }
 
   .agent-legend {
-    inset: 55% 12px auto auto;
+    inset: auto auto 140px 12px;
     min-inline-size: 150px;
     max-inline-size: 180px;
   }
@@ -789,7 +953,7 @@ input[type='range'] {
     grid-template-columns: 1fr;
   }
 
-  .controls input[aria-label='Playback timeline'] {
+  .timeline-visualizer {
     grid-column: 1 / -1;
     grid-row: 1;
   }
@@ -871,11 +1035,15 @@ input[type='range'] {
     gap: 8px;
   }
 
-  .top-right-box {
+  .top-right-stack {
     flex: 1 1 auto;
     min-inline-size: 0;
     justify-items: stretch;
     gap: 10px;
+  }
+
+  .top-right-box {
+    justify-items: stretch;
   }
 
   .top-controls-toggle {
@@ -917,13 +1085,29 @@ input[type='range'] {
     inline-size: 100%;
   }
 
-  .scene-picker select {
+  .scene-picker-value {
     max-inline-size: 100%;
   }
 
-  .scene-toolbar > button {
+  .scene-toolbar > button,
+  .camera-actions,
+  .camera-actions > button {
     min-inline-size: 0;
     inline-size: 100%;
+  }
+
+  .camera-actions {
+    grid-column: auto;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .camera-lock-toggle {
+    padding-inline: 9px;
+  }
+
+  .camera-lock-state {
+    min-inline-size: 28px;
+    padding-inline: 6px;
   }
 
   .zoom-control {
@@ -939,12 +1123,29 @@ input[type='range'] {
 
   .top-right-box.is-collapsed .scene-picker,
   .top-right-box.is-collapsed .scene-toolbar > button,
-  .top-right-box.is-collapsed .stage-panel {
+  .top-right-box.is-collapsed .camera-actions,
+  .top-right-box.is-collapsed .zoom-control {
     display: none;
   }
 
   .agent-legend {
-    inset: auto 12px 150px auto;
-    transform: none;
+    inset: auto auto 150px 12px;
   }
+}
+
+/* Landing: plain navy with the logo across the middle, above everything but the loader. */
+.landing-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #101722;
+}
+
+.landing-screen img {
+  display: block;
+  inline-size: min(70vw, 960px);
+  block-size: auto;
 }
