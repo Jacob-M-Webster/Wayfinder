@@ -35,7 +35,7 @@ def listen_and_trigger():
                 pyautogui.press('1')
                 
             elif line == "SCENE_2":
-                print("[!] Outage detected -> Triggering Scene 3"1)
+                print("[!] Outage detected -> Triggering Scene 2")
                 pyautogui.press('2')
                 
         except Exception as e:
