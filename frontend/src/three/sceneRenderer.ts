@@ -1,9 +1,34 @@
 import * as THREE from 'three'
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import type { Bounds, Point, SceneData } from '../types/scene'
 import { agentColors, sceneBackground, signalColors } from './sceneConstants'
 import { angleDelta, circularMean, clamp, pointDistance, smoothstep } from './math'
 import type { AgentRender, DynamicSceneState, ThreeRefs } from './sceneTypes'
+
+const bicycleModelUrl = new URL('../assets/bicycle_low-poly_minimalistic.glb', import.meta.url).href
+const waymoModelUrl = `${import.meta.env.BASE_URL}waymo/scene.gltf`
+const carModelUrls = [
+  new URL('../assets/cars/NormalCar1.obj', import.meta.url).href,
+  new URL('../assets/cars/NormalCar2.obj', import.meta.url).href,
+  new URL('../assets/cars/SportsCar.obj', import.meta.url).href,
+  new URL('../assets/cars/SportsCar2.obj', import.meta.url).href,
+  new URL('../assets/cars/SUV.obj', import.meta.url).href,
+  new URL('../assets/cars/Taxi.obj', import.meta.url).href,
+  new URL('../assets/cars/Cop.obj', import.meta.url).href,
+]
+const bicycleLoader = new GLTFLoader()
+const carLoader = new OBJLoader()
+let bicycleModelPromise: Promise<THREE.Group> | null = null
+let waymoModelPromise: Promise<THREE.Group> | null = null
+let carModelPromise: Promise<THREE.Group[]> | null = null
+
+const modelToSceneBasis = new THREE.Matrix4().makeBasis(
+  new THREE.Vector3(0, 1, 0),
+  new THREE.Vector3(0, 0, 1),
+  new THREE.Vector3(1, 0, 0),
+)
 
 type EdgeFade = Bounds & {
   fadeDistance: number
@@ -74,16 +99,30 @@ export function buildDynamicScene(group: THREE.Group, sceneData: SceneData): Dyn
   const agents = sceneData.agents.map((agent) => {
     const height = getAgentHeight(agent.type)
     const color = agent.is_sdc ? 0xffffff : agentColors[agent.type] ?? agentColors.other
+    const isPedestrian = agent.type === 'pedestrian'
+    const isCyclist = agent.type === 'cyclist'
+    const isModeledVehicle = agent.type === 'vehicle' && !agent.is_sdc
+    const isWaymoVehicle = agent.type === 'vehicle' && Boolean(agent.is_sdc)
     const box = new THREE.Mesh(
       new THREE.BoxGeometry(agent.length, agent.width, height),
-      new THREE.MeshStandardMaterial({
-        color,
-        roughness: 0.42,
-        metalness: agent.type === 'vehicle' ? 0.18 : 0.02,
-      }),
+      isPedestrian || isCyclist || isModeledVehicle || isWaymoVehicle
+        ? new THREE.MeshBasicMaterial({
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+          })
+        : new THREE.MeshStandardMaterial({
+            color,
+            roughness: 0.42,
+            metalness: agent.type === 'vehicle' ? 0.18 : 0.02,
+          }),
     )
     box.visible = false
-    box.castShadow = true
+    box.castShadow = !(isPedestrian || isCyclist || isModeledVehicle || isWaymoVehicle)
+    if (isPedestrian) attachPedestrianModel(box, agent, height, color)
+    else if (isCyclist) attachCyclistModel(box, agent, height, color)
+    else if (isModeledVehicle) attachVehicleModel(box, agent, height, color)
+    else if (isWaymoVehicle) attachWaymoModel(box, agent, height)
 
     const outline = new THREE.LineSegments(
       new THREE.EdgesGeometry(box.geometry, 18),
@@ -167,7 +206,7 @@ export function updateDynamicScene(
 
     headingIcon.position.set(x, y, height + 0.1)
     headingIcon.rotation.z = heading
-    headingIcon.visible = true
+    headingIcon.visible = agent.type !== 'pedestrian' && agent.type !== 'cyclist' && agent.type !== 'vehicle'
 
     updateTrail(trail, agent, step, showTrails)
   })
@@ -340,6 +379,222 @@ export function clearGroup(group: THREE.Group) {
 
 function getAgentHeight(type: string) {
   return type === 'pedestrian' ? 1.65 : type === 'cyclist' ? 1.35 : 1.55
+}
+
+function getBicycleModel() {
+  bicycleModelPromise ??= new Promise((resolve, reject) => {
+    bicycleLoader.load(bicycleModelUrl, (gltf) => resolve(gltf.scene), undefined, reject)
+  })
+  return bicycleModelPromise
+}
+
+function getWaymoModel() {
+  waymoModelPromise ??= new Promise((resolve, reject) => {
+    bicycleLoader.load(waymoModelUrl, (gltf) => resolve(gltf.scene), undefined, reject)
+  })
+  return waymoModelPromise
+}
+
+function getCarModels() {
+  carModelPromise ??= Promise.all(carModelUrls.map((url) => new Promise<THREE.Group>((resolve, reject) => {
+    carLoader.load(url, resolve, undefined, reject)
+  })))
+  return carModelPromise
+}
+
+function getAgentModelIndex(agent: SceneData['agents'][number], count: number) {
+  return Math.abs(agent.id) % count
+}
+
+function applySolidModelMaterial(model: THREE.Object3D, material: THREE.Material) {
+  model.traverse((object) => {
+    if (object instanceof THREE.Mesh) {
+      object.material = material
+      object.castShadow = true
+      object.receiveShadow = true
+    }
+  })
+}
+
+function makeMaterialOpaque(material: THREE.Material) {
+  const solid = material.clone()
+  solid.transparent = false
+  solid.opacity = 1
+  solid.alphaTest = 0
+  solid.depthWrite = true
+  solid.depthTest = true
+  solid.side = THREE.FrontSide
+
+  const maybeMapped = solid as THREE.Material & {
+    alphaMap?: THREE.Texture | null
+    needsUpdate: boolean
+  }
+  maybeMapped.alphaMap = null
+  maybeMapped.needsUpdate = true
+  return solid
+}
+
+function makeObjectMaterialsOpaque(object: THREE.Mesh) {
+  object.material = Array.isArray(object.material)
+    ? object.material.map(makeMaterialOpaque)
+    : makeMaterialOpaque(object.material)
+}
+
+function fitModelToAgentBox(
+  root: THREE.Object3D,
+  centeredObjects: THREE.Object3D[],
+  agent: SceneData['agents'][number],
+  height: number,
+  fit: THREE.Vector3Tuple = [0.96, 0.96, 0.96],
+) {
+  root.updateMatrixWorld(true)
+  const bounds = new THREE.Box3().setFromObject(root)
+  const size = new THREE.Vector3()
+  const center = new THREE.Vector3()
+  bounds.getSize(size)
+  bounds.getCenter(center)
+  centeredObjects.forEach((object) => object.position.sub(center))
+  root.scale.set(
+    (agent.length * fit[0]) / Math.max(size.x, 0.001),
+    (agent.width * fit[1]) / Math.max(size.y, 0.001),
+    (height * fit[2]) / Math.max(size.z, 0.001),
+  )
+}
+
+function attachVehicleModel(anchor: THREE.Mesh, agent: SceneData['agents'][number], height: number, color: number) {
+  void getCarModels().then((sources) => {
+    if (!anchor.parent || sources.length === 0) return
+
+    const root = new THREE.Group()
+    const model = sources[getAgentModelIndex(agent, sources.length)].clone(true)
+    const material = new THREE.MeshStandardMaterial({
+      color,
+      roughness: 0.5,
+      metalness: 0.08,
+    })
+
+    applySolidModelMaterial(model, material)
+    model.quaternion.setFromRotationMatrix(modelToSceneBasis)
+    root.add(model)
+
+    fitModelToAgentBox(root, [model], agent, height, [1.06, 1.06, 1.08])
+    root.renderOrder = 20
+    anchor.add(root)
+  }).catch((error) => {
+    console.error('Unable to load vehicle car model', error)
+  })
+}
+
+function attachWaymoModel(anchor: THREE.Mesh, agent: SceneData['agents'][number], height: number) {
+  void getWaymoModel().then((source) => {
+    if (!anchor.parent) return
+
+    const root = new THREE.Group()
+    const model = source.clone(true)
+
+    model.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        makeObjectMaterialsOpaque(object)
+        object.castShadow = true
+        object.receiveShadow = true
+      }
+    })
+    model.quaternion.setFromRotationMatrix(modelToSceneBasis)
+    root.add(model)
+
+    fitModelToAgentBox(root, [model], agent, height)
+    root.renderOrder = 20
+    anchor.add(root)
+  }).catch((error) => {
+    console.error('Unable to load Waymo SDC model', error)
+  })
+}
+
+function attachPedestrianModel(anchor: THREE.Mesh, agent: SceneData['agents'][number], height: number, color: number) {
+  const root = new THREE.Group()
+  const material = new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.64,
+    metalness: 0.01,
+  })
+  const bodyHeight = height * 0.46
+  const legHeight = height * 0.32
+  const armHeight = height * 0.28
+  const headRadius = Math.min(height * 0.16, Math.max(agent.width, agent.length) * 0.42)
+  const limbRadius = Math.max(0.035, Math.min(agent.width, agent.length) * 0.12)
+  const shoulderY = Math.max(agent.width * 0.24, limbRadius * 2.2)
+  const hipY = Math.max(agent.width * 0.13, limbRadius * 1.45)
+
+  const makeVerticalLimb = (length: number, radius: number, x: number, y: number, z: number) => {
+    const limb = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, 10), material)
+    limb.rotation.x = Math.PI / 2
+    limb.position.set(x, y, z)
+    limb.castShadow = true
+    limb.receiveShadow = true
+    root.add(limb)
+  }
+
+  const torso = new THREE.Mesh(
+    new THREE.CylinderGeometry(agent.width * 0.22, agent.width * 0.28, bodyHeight, 12),
+    material,
+  )
+  torso.rotation.x = Math.PI / 2
+  torso.position.z = height * 0.05
+  torso.castShadow = true
+  torso.receiveShadow = true
+  root.add(torso)
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(headRadius, 16, 12), material)
+  head.position.z = height * 0.41
+  head.castShadow = true
+  head.receiveShadow = true
+  root.add(head)
+
+  makeVerticalLimb(legHeight, limbRadius, 0, -hipY, -height * 0.32)
+  makeVerticalLimb(legHeight, limbRadius, 0, hipY, -height * 0.32)
+  makeVerticalLimb(armHeight, limbRadius, 0, -shoulderY, height * 0.04)
+  makeVerticalLimb(armHeight, limbRadius, 0, shoulderY, height * 0.04)
+
+  root.renderOrder = 20
+  anchor.add(root)
+}
+
+function attachCyclistModel(anchor: THREE.Mesh, agent: SceneData['agents'][number], height: number, color: number) {
+  void getBicycleModel().then((source) => {
+    if (!anchor.parent) return
+
+    const root = new THREE.Group()
+    const weightShell = source.clone(true)
+    const model = source.clone(true)
+    const material = new THREE.MeshStandardMaterial({
+      color,
+      roughness: 0.54,
+      metalness: 0.04,
+    })
+    const weightMaterial = new THREE.MeshStandardMaterial({
+      color,
+      roughness: 0.62,
+      metalness: 0.02,
+    })
+
+    applySolidModelMaterial(weightShell, weightMaterial)
+    weightShell.quaternion.setFromRotationMatrix(modelToSceneBasis)
+    weightShell.scale.set(1.34, 1.18, 1)
+
+    applySolidModelMaterial(model, material)
+
+    // glTF is Y-up and this bicycle's long axis is local Z.
+    // The scene is Z-up and agents face local +X, so map:
+    // model X -> scene Y, model Y -> scene Z, model Z -> scene X.
+    model.quaternion.setFromRotationMatrix(modelToSceneBasis)
+    root.add(weightShell, model)
+
+    fitModelToAgentBox(root, [weightShell, model], agent, height)
+    root.renderOrder = 20
+    anchor.add(root)
+  }).catch((error) => {
+    console.error('Unable to load cyclist bicycle model', error)
+  })
 }
 
 function makeHeadingIcon(agent: SceneData['agents'][number]) {
