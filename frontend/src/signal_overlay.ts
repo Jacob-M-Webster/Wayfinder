@@ -91,8 +91,6 @@ const COLOR: Record<string, string> = {
   STOP: '#ff4438', CAUTION: '#ffb000', GO: '#19d3a2', // LED-style signal colors
   UNKNOWN: '#7d858c', BEACON: '#4aa8ff', TEXT: '#e8ebe6',
 }
-const BADGE_FILL = 'rgba(12, 16, 23, 0.96)'
-const BADGE_TEXT_STROKE = 'rgba(5, 8, 12, 0.82)'
 const DIM = { STOP: '#3a1512', CAUTION: '#3a2a0a', GO: '#0c3027' }
 const WORD: Record<string, string> = {
   STOP: 'Stop', GO: 'Go', CAUTION: 'Caution', UNKNOWN: 'No read', ALL_WAY_STOP: 'All-way stop',
@@ -124,20 +122,8 @@ function fitText(
     s -= 2
     ctx.font = `${weight} ${s}px ${family}`
   }
-  fillTextWithStroke(ctx, text, x, y)
-  return ctx.measureText(text).width
-}
-
-function fillTextWithStroke(ctx: CanvasRenderingContext2D, text: string, x: number, y: number) {
-  ctx.save()
-  ctx.lineJoin = 'round'
-  ctx.miterLimit = 2
-  const fontSize = Number(ctx.font.match(/(\d+(?:\.\d+)?)px/)?.[1] ?? 24)
-  ctx.lineWidth = Math.max(3, Math.round(fontSize * 0.11))
-  ctx.strokeStyle = BADGE_TEXT_STROKE
-  ctx.strokeText(text, x, y)
-  ctx.restore()
   ctx.fillText(text, x, y)
+  return ctx.measureText(text).width
 }
 
 /*
@@ -378,14 +364,9 @@ export class SignalOverlay {
       : COLOR[st.phase] ?? COLOR.UNKNOWN
 
     ctx.clearRect(0, 0, W, H)
-    ctx.save()
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.48)'
-    ctx.shadowBlur = 14
-    ctx.shadowOffsetY = 5
     roundRect(ctx, 6, 6, W - 12, H - 12, 22)
-    ctx.fillStyle = BADGE_FILL
+    ctx.fillStyle = 'rgba(24, 28, 33, 0.9)'
     ctx.fill()
-    ctx.restore()
     ctx.lineWidth = ego ? 6 : 3
     ctx.strokeStyle = accent
     ctx.stroke()
@@ -421,10 +402,10 @@ export class SignalOverlay {
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.font = `700 34px ${this.font}`
-    fillTextWithStroke(ctx, st.source === 'BEACON' ? 'Live' : `${Math.round(st.conf * 100)}%`, cx, cy + 1)
+    ctx.fillText(st.source === 'BEACON' ? 'Live' : `${Math.round(st.conf * 100)}%`, cx, cy + 1)
     ctx.fillStyle = 'rgba(232, 235, 230, 0.68)'
     ctx.font = `600 15px ${this.font}`
-    fillTextWithStroke(ctx, st.source === 'BEACON' ? 'beacon' : 'confidence', cx, 148)
+    ctx.fillText(st.source === 'BEACON' ? 'beacon' : 'confidence', cx, 148)
 
     // Text column
     const tx = 142
@@ -452,7 +433,7 @@ export class SignalOverlay {
       const w = fitText(ctx, label, tx, 158, maxW - (mark ? 24 : 0), 22, 500, f)
       if (mark) {
         ctx.fillStyle = mark.includes('✓') ? COLOR.GO : COLOR.CAUTION
-        fillTextWithStroke(ctx, mark, tx + w, 158)
+        ctx.fillText(mark, tx + w, 158)
       }
     }
     L.tex.needsUpdate = true
