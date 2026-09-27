@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
+import { Bug } from 'lucide'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import logoUrl from './assets/logo.png'
 import './App.css'
+import { Icon } from './components/Icon'
 import { AgentLegend } from './features/scenes/AgentLegend'
 import { ControlGuide } from './features/scenes/ControlGuide'
 import { LandingScreen } from './features/scenes/LandingScreen'
@@ -496,6 +498,17 @@ function App() {
               )}
             </div>
           </div>
+
+          <button
+            type="button"
+            className={`debug-toggle ${testUiOpen ? 'is-active' : ''}`}
+            aria-pressed={testUiOpen}
+            aria-label={testUiOpen ? 'Hide debug controls' : 'Show debug controls'}
+            title={testUiOpen ? 'Hide debug controls' : 'Show debug controls'}
+            onClick={() => setTestUiOpen((value) => !value)}
+          >
+            <Icon icon={Bug} />
+          </button>
 
           <AgentLegend />
 
