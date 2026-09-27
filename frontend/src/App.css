@@ -562,7 +562,7 @@ input[type='range'] {
   gap: 7px;
   width: 150px;
   max-inline-size: calc(100% - 32px);
-  padding: 10px 42px 44px 10px;
+  padding: 10px;
   border: 1px solid rgba(220, 229, 241, 0.12);
   border-radius: 8px;
   background: rgba(21, 28, 40, 0.82);
@@ -577,19 +577,23 @@ input[type='range'] {
 }
 
 .agent-legend.is-closed .legend-panel {
-  width: fit-content;
+  width: 52px;
+  grid-template-columns: 30px;
+  justify-content: center;
   justify-items: center;
-  padding: 10px 25px 54px;
+  padding: 25px;
+  padding-top: 15px;
+  padding-bottom: 15px;
   overflow: visible;
 }
 
 .legend-toggle {
-  position: absolute;
-  inset: auto 8px 8px auto;
   inline-size: 30px;
   min-inline-size: 30px;
   block-size: 30px;
   min-height: 30px;
+  justify-self: end;
+  margin-top: 4px;
   border-radius: 50%;
   padding: 0;
   background: rgba(246, 248, 251, 0.94);
@@ -612,9 +616,8 @@ input[type='range'] {
 }
 
 .agent-legend.is-closed .legend-toggle {
-  inset-inline-start: 50%;
-  inset-inline-end: auto;
-  transform: translateX(-50%);
+  justify-self: center;
+  margin-top: 6px;
 }
 
 .legend-toggle svg {
@@ -637,13 +640,14 @@ input[type='range'] {
 .agent-legend.is-closed .legend-item {
   grid-template-columns: 28px;
   justify-items: center;
-  inline-size: 28px;
+  inline-size: 30px;
+  min-height: 30px;
   gap: 0;
 }
 
 .agent-legend.is-closed .legend-swatch {
-  inline-size: 28px;
-  block-size: 28px;
+  inline-size: 30px;
+  block-size: 30px;
 }
 
 .agent-legend.is-closed .legend-swatch svg {
@@ -660,6 +664,8 @@ input[type='range'] {
   block-size: 24px;
   display: inline-grid;
   place-items: center;
+  justify-self: center;
+  align-self: center;
   border: 0;
   background: transparent;
   color: var(--legend-color);
