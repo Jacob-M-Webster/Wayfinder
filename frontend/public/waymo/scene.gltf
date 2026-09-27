@@ -1,0 +1,333 @@
+{
+  "accessors": [
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 8450,
+      "max": [
+        41.720001220703125,
+        90.42749786376953,
+        83.38790130615234
+      ],
+      "min": [
+        -41.720001220703125,
+        -102.80460357666016,
+        0.2694000005722046
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 101400,
+      "componentType": 5126,
+      "count": 8450,
+      "max": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "min": [
+        -1.0,
+        -1.0,
+        -1.0
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 8450,
+      "max": [
+        1.0,
+        0.9999966621398926,
+        0.9999591708183289,
+        1.0
+      ],
+      "min": [
+        -1.0,
+        -0.9999800324440002,
+        -0.9999947547912598,
+        -1.0
+      ],
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 8450,
+      "max": [
+        0.9961000084877014,
+        0.9961000084877014
+      ],
+      "min": [
+        0.0038999998942017555,
+        0.0038999998942017555
+      ],
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 0,
+      "componentType": 5125,
+      "count": 32322,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 202800,
+      "componentType": 5126,
+      "count": 1512,
+      "max": [
+        37.707801818847656,
+        51.05699920654297,
+        65.16539764404297
+      ],
+      "min": [
+        -37.707801818847656,
+        -92.79000091552734,
+        0.2694000005722046
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 220944,
+      "componentType": 5126,
+      "count": 1512,
+      "max": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "min": [
+        -1.0,
+        -1.0,
+        -1.0
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 3,
+      "byteOffset": 135200,
+      "componentType": 5126,
+      "count": 1512,
+      "max": [
+        1.0,
+        0.9998739957809448,
+        0.999602735042572,
+        1.0
+      ],
+      "min": [
+        -1.0,
+        -0.9987714290618896,
+        -0.9981446862220764,
+        -1.0
+      ],
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 67600,
+      "componentType": 5126,
+      "count": 1512,
+      "max": [
+        0.9904000163078308,
+        0.7124000191688538
+      ],
+      "min": [
+        0.0038999998942017555,
+        0.0038999998942017555
+      ],
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 0,
+      "byteOffset": 129288,
+      "componentType": 5125,
+      "count": 6726,
+      "type": "SCALAR"
+    }
+  ],
+  "asset": {
+    "extras": {
+      "author": "ROH3D (https://sketchfab.com/roh3d)",
+      "license": "COPYRIGHT TO ROH3D",
+      "source": "https://sketchfab.com/3d-models/low-poly-car-jaguar-i-pace-waymo-driver-9d2b18ad2f5642cfafa6695636b35d9d",
+      "title": "Low Poly Car - Jaguar I-PACE Waymo Driver"
+    },
+    "generator": "Sketchfab-16.93.0",
+    "version": "2.0"
+  },
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 156192,
+      "name": "floatBufferViews",
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 79696,
+      "byteOffset": 156192,
+      "byteStride": 8,
+      "name": "floatBufferViews",
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 239088,
+      "byteOffset": 235888,
+      "byteStride": 12,
+      "name": "floatBufferViews",
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 159392,
+      "byteOffset": 474976,
+      "byteStride": 16,
+      "name": "floatBufferViews",
+      "target": 34962
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 634368,
+      "uri": "scene.bin"
+    }
+  ],
+  "images": [
+    {
+      "uri": "textures/wire_224198087_baseColor.png"
+    },
+    {
+      "uri": "textures/wire_224198087_metallicRoughness.png"
+    },
+    {
+      "uri": "textures/wire_224198087_normal.png"
+    }
+  ],
+  "materials": [
+    {
+      "alphaMode": "BLEND",
+      "doubleSided": true,
+      "name": "wire_224198087",
+      "normalTexture": {
+        "index": 2
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicRoughnessTexture": {
+          "index": 1
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Object_0",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 1,
+            "POSITION": 0,
+            "TANGENT": 2,
+            "TEXCOORD_0": 3
+          },
+          "indices": 4,
+          "material": 0,
+          "mode": 4
+        }
+      ]
+    },
+    {
+      "name": "Object_1",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 6,
+            "POSITION": 5,
+            "TANGENT": 7,
+            "TEXCOORD_0": 8
+          },
+          "indices": 9,
+          "material": 0,
+          "mode": 4
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "children": [
+        1
+      ],
+      "matrix": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.220446049250313e-16,
+        -1.0,
+        0.0,
+        0.0,
+        1.0,
+        2.220446049250313e-16,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Sketchfab_model"
+    },
+    {
+      "children": [
+        2,
+        3
+      ],
+      "name": "Waymo_Taxi.obj.cleaner.materialmerger.gles"
+    },
+    {
+      "mesh": 0,
+      "name": "Object_2"
+    },
+    {
+      "mesh": 1,
+      "name": "Object_3"
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Sketchfab_Scene",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "source": 0
+    },
+    {
+      "sampler": 0,
+      "source": 1
+    },
+    {
+      "sampler": 0,
+      "source": 2
+    }
+  ]
+}
