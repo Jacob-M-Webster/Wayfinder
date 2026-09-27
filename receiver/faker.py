@@ -11,7 +11,7 @@ import socket
 import sys
 import time
 
-RECEIVER_IP = "192.168.1.50"  # <-- set this to Laptop B's IP address
+RECEIVER_IP = "10.108.80.184"  # <-- set this to Laptop B's IP address
 UDP_PORT = 9999               # must match receiver_packet_wireless.py
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
