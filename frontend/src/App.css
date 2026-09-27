@@ -263,6 +263,16 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.app-logo:hover {
+  border-color: transparent;
+  background: transparent;
 }
 
 .app-logo img {

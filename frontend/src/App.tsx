@@ -392,6 +392,14 @@ function App() {
     setPlaying((value) => !value)
   }, [loopPlayback, playing, sceneData, step])
 
+  const returnToLanding = useCallback(() => {
+    setPlaying(false)
+    setSceneData(null)
+    setActiveSceneKey(null)
+    setStep(0)
+    setLoadDialogOpen(false)
+  }, [])
+
   useEffect(() => {
     if (loadDialogOpen) return
     const onKey = (event: KeyboardEvent) => {
@@ -399,13 +407,8 @@ function App() {
       const key = event.key.toLowerCase()
       const scene = demoScenes.find((item) => item.hotkey === key)
       if (scene) void loadScene(scene.url, `${scene.fileName} loaded`, scene.key)
-      else if (key === '0') {
-        // Back to the landing screen.
-        setPlaying(false)
-        setSceneData(null)
-        setActiveSceneKey(null)
-        setStep(0)
-      } else if (key === 'g') overrideStage({ gridUp: !gridUp })
+      else if (key === '0') returnToLanding()
+      else if (key === 'g') overrideStage({ gridUp: !gridUp })
       else if (key === 'b') overrideStage({ beaconAlive: !beaconAlive })
       else if (key === 'a') setAutoStage(true)
       else if (key === '8') setTestUiOpen((value) => !value)
@@ -417,7 +420,7 @@ function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [beaconAlive, gridUp, handlePlayPause, loadDialogOpen, loadScene, overrideStage])
+  }, [beaconAlive, gridUp, handlePlayPause, loadDialogOpen, loadScene, overrideStage, returnToLanding])
 
   function handleFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -475,9 +478,15 @@ function App() {
           <div className="hover-dot" ref={hoverDotRef} aria-hidden="true" />
           <div className="top-overlay">
             <div className="top-left-box">
-              <div className="app-logo" aria-label="SDC">
+              <button
+                type="button"
+                className="app-logo"
+                aria-label="Return to landing page"
+                title="Return to landing page"
+                onClick={returnToLanding}
+              >
                 <img src={logoUrl} alt="SDC" />
-              </div>
+              </button>
               {testUiOpen && (
                 <ControlGuide open={controlGuideOpen} onToggle={() => setControlGuideOpen((value) => !value)} />
               )}
