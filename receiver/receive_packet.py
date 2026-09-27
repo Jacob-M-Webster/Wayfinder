@@ -1,14 +1,15 @@
 import json
+import socket
 import threading
 import time
 
-import serial
 import pyautogui
 from websockets.sync.server import serve
 
-# Update to match your M5Stack's COM port
-COM_PORT = "COM4"
-BAUD_RATE = 115200
+# --- Wireless (UDP) settings, replaces the COM_PORT/serial connection ---
+UDP_HOST = "0.0.0.0"     # listen on all interfaces
+UDP_PORT = 9999          # pick any free port; must match the sender
+
 WEBSOCKET_PORT = 8765
 WEBSOCKET_HOST = "0.0.0.0"
 websocket_clients = set()
@@ -44,44 +45,45 @@ def broadcast_scene(scene):
             with websocket_clients_lock:
                 websocket_clients.discard(client)
 
+
+def handle_line(line: str):
+    """Same dispatch logic you already had — now called from the UDP loop
+    instead of the serial loop, so nothing downstream needs to change."""
+    print(f"Received raw packet: {line}")
+
+    if line == "SCENE_1":
+        print("[!] Sequence Start detected -> Triggering Scene 1")
+        pyautogui.press('1')
+        broadcast_scene(line)
+
+    elif line == "SCENE_2":
+        print("[!] Outage detected -> Triggering Scene 2")
+        pyautogui.press('2')
+        broadcast_scene(line)
+
+
 if __name__ == "__main__":
     threading.Thread(target=run_websocket_server, daemon=True).start()
-    print(f"Connecting to {COM_PORT}...")
 
-    # Open serial port with DTR/RTS disabled to prevent M5Stack reset/hangs
-    ser = serial.Serial()
-    ser.port = COM_PORT
-    ser.baudrate = BAUD_RATE
-    ser.timeout = None
-    ser.dtr = False
-    ser.rts = False
-    ser.open()
+    print(f"Listening for wireless (UDP) packets on {UDP_HOST}:{UDP_PORT}...")
 
-    print(f"Listening for packets on {COM_PORT}...")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind((UDP_HOST, UDP_PORT))
 
     try:
         while True:
             try:
-                # Reads incoming line from M5Stack
-                line = ser.readline().decode('utf-8', errors='ignore').strip()
+                data, addr = sock.recvfrom(1024)  # blocks until a packet arrives
+                line = data.decode('utf-8', errors='ignore').strip()
 
                 if not line:
                     continue
 
-                print(f"Received raw packet: {line}")
-
-                if line == "SCENE_1":
-                    print("[!] Sequence Start detected -> Triggering Scene 1")
-                    pyautogui.press('1')
-                    broadcast_scene(line)
-
-                elif line == "SCENE_2":
-                    print("[!] Outage detected -> Triggering Scene 2")
-                    pyautogui.press('2')
-                    broadcast_scene(line)
+                handle_line(line)
 
             except Exception as e:
-                print(f"Serial read error: {e}")
+                print(f"UDP read error: {e}")
                 break
     finally:
-        ser.close()
+        sock.close()
