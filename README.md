@@ -11,3 +11,4 @@ npm run dev
 ```
 
 Open the local URL Vite prints. The app auto-loads `frontend/public/scene.json`, which is copied from `sample_data/scene.json`.
+

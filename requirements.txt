@@ -1,0 +1,8 @@
+numpy
+pandas
+pyarrow
+lightgbm
+protobuf>=7.35.1
+pyserial
+pyautogui
+websockets>=12

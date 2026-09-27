@@ -664,6 +664,8 @@ input[type='range'] {
   block-size: 24px;
   display: inline-grid;
   place-items: center;
+  justify-self: center;
+  align-self: center;
   border: 0;
   background: transparent;
   color: var(--legend-color);
@@ -1298,6 +1300,12 @@ input[type='range'] {
   color: #e7edf6;
   font-size: clamp(16px, 2vw, 22px);
   font-weight: 800;
+}
+
+.landing-directions .hardware-status {
+  color: #aeb9c9;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .landing-demo-keys {

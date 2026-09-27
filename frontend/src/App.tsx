@@ -9,6 +9,7 @@ import { Icon } from './components/Icon'
 import { AgentLegend } from './features/scenes/AgentLegend'
 import { ControlGuide } from './features/scenes/ControlGuide'
 import { LandingScreen } from './features/scenes/LandingScreen'
+import type { HardwareScene } from './features/scenes/LandingScreen'
 import { LoadSceneDialog } from './features/scenes/LoadSceneDialog'
 import { LoadingScreen } from './features/scenes/LoadingScreen'
 import { PlaybackControls } from './features/scenes/PlaybackControls'
@@ -452,6 +453,15 @@ function App() {
     void loadScene(scene.url, `${scene.fileName} loaded`, scene.key)
   }
 
+  const handleHardwareScene = useCallback((hardwareScene: HardwareScene) => {
+    const hotkey = hardwareScene === 'SCENE_1' ? '1' : '2'
+    const scene = demoScenes.find((item) => item.hotkey === hotkey)
+    if (!scene) return
+
+    setLoadDialogOpen(false)
+    void loadScene(scene.url, `${scene.fileName} loaded`, scene.key)
+  }, [loadScene])
+
 
   const timeLabel = sceneData ? `${(step / sceneData.hz).toFixed(1)}s` : '0.0s'
   const totalTime = sceneData ? `${((sceneData.num_steps - 1) / sceneData.hz).toFixed(1)}s` : '0.0s'
@@ -537,7 +547,7 @@ function App() {
             />
           )}
 
-          {!sceneData && <LandingScreen />}
+          {!sceneData && <LandingScreen onSceneReceived={handleHardwareScene} />}
 
           {loading && <LoadingScreen />}
 
