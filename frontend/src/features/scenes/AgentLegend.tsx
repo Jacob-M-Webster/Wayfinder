@@ -25,17 +25,17 @@ export function AgentLegend() {
             <span className="legend-label">{item.label}</span>
           </div>
         ))}
+        <button
+          type="button"
+          className="legend-toggle"
+          aria-label={collapsed ? 'Expand agent legend' : 'Collapse agent legend'}
+          aria-expanded={!collapsed}
+          title={collapsed ? 'Expand legend' : 'Collapse legend'}
+          onClick={() => setCollapsed((value) => !value)}
+        >
+          <Icon icon={collapsed ? ChevronsRight : ChevronsLeft} />
+        </button>
       </section>
-      <button
-        type="button"
-        className="legend-toggle"
-        aria-label={collapsed ? 'Expand agent legend' : 'Collapse agent legend'}
-        aria-expanded={!collapsed}
-        title={collapsed ? 'Expand legend' : 'Collapse legend'}
-        onClick={() => setCollapsed((value) => !value)}
-      >
-        <Icon icon={collapsed ? ChevronsRight : ChevronsLeft} />
-      </button>
     </div>
   )
 }
