@@ -1,3 +1,5 @@
+import hmac
+import hashlib
 import json
 import socket
 import threading
@@ -14,6 +16,33 @@ BAUD_RATE = 115200
 # --- UDP (fake / simulated beacon, e.g. Laptop A/B) settings ---
 UDP_HOST = "0.0.0.0"   # listen on all interfaces
 UDP_PORT = 9999        # must match the sender
+
+# Shared secret — must match HMAC_KEY in fake_beacon_sender.py exactly.
+# Only packets signed with this key are treated as a legitimate simulated
+# beacon; anything else is rejected outright (not even tagged "sim").
+HMAC_KEY = b"wayfinder-dev-shared-secret"
+
+
+def verify_udp_packet(raw: str):
+    """Parses '<scene>|<hex_hmac>' and verifies the HMAC.
+    Returns the scene string if valid, or None if the packet is
+    malformed or fails verification (i.e. a spoofed/unsigned packet)."""
+    parts = raw.split("|")
+    if len(parts) != 2:
+        return None
+
+    scene, received_hex = parts
+    try:
+        received_mac = bytes.fromhex(received_hex)
+    except ValueError:
+        return None
+
+    expected_mac = hmac.new(HMAC_KEY, scene.encode("utf-8"), hashlib.sha256).digest()[:8]
+
+    if not hmac.compare_digest(received_mac, expected_mac):
+        return None  # signature doesn't match — reject, don't trust content
+
+    return scene
 
 WEBSOCKET_PORT = 8765
 WEBSOCKET_HOST = "0.0.0.0"
@@ -111,10 +140,16 @@ def run_udp_listener():
         while True:
             try:
                 data, addr = sock.recvfrom(1024)
-                line = data.decode('utf-8', errors='ignore').strip()
-                if not line:
+                raw = data.decode('utf-8', errors='ignore').strip()
+                if not raw:
                     continue
-                handle_line(line, source="sim")
+
+                scene = verify_udp_packet(raw)
+                if scene is None:
+                    print(f"[sim] REJECTED unverified/spoofed packet from {addr}: {raw!r}")
+                    continue  # do NOT press keys or broadcast — untrusted
+
+                handle_line(scene, source="sim")
             except Exception as e:
                 print(f"[sim] UDP read error: {e}")
                 break
