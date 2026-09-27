@@ -132,6 +132,7 @@ function fitText(
 */
 export function arbitrate(
   data: OverlaySceneData, target: string | { lane: number }, step: number, beaconAlive: boolean,
+  beaconPhase?: string,
 ): Decision {
   const m = data.model
   const ego = typeof target !== 'string'
@@ -139,7 +140,10 @@ export function arbitrate(
     ? (data.truth.lane[step] ?? {})[String(target.lane)] ?? 'UNKNOWN'
     : (data.truth.approach[step] ?? {})[target] ?? 'UNKNOWN'
 
-  // The beacon replays the real signal timeline, so while it's alive it reports the truth.
+  // A scene can script a fixed phase for the beacon to broadcast (e.g. STOP on every light).
+  // That broadcast is the signal state for the demo, so it is also shown as the actual light.
+  if (beaconAlive && beaconPhase) return { phase: beaconPhase, conf: 1, source: 'BEACON', truth: beaconPhase }
+  // Otherwise the beacon replays the real signal timeline, so while it's alive it reports the truth.
   if (beaconAlive && KNOWN.has(truth)) return { phase: truth, conf: 1, source: 'BEACON', truth }
 
   let pred: ModelStep | null | undefined = null
@@ -150,9 +154,11 @@ export function arbitrate(
 }
 
 /** The Waymo car's own light, or null if the scene has no ego lane. */
-export function egoDecision(data: OverlaySceneData, step: number, beaconAlive: boolean): Decision | null {
+export function egoDecision(
+  data: OverlaySceneData, step: number, beaconAlive: boolean, beaconPhase?: string,
+): Decision | null {
   const lane = data.ego_lane ?? data.model?.ego_lane ?? null
-  return lane == null ? null : arbitrate(data, { lane }, step, beaconAlive)
+  return lane == null ? null : arbitrate(data, { lane }, step, beaconAlive, beaconPhase)
 }
 
 export class SignalOverlay {
@@ -189,9 +195,9 @@ export class SignalOverlay {
   }
 
   // ---------- public ----------
-  update(step: number, beaconAlive: boolean) {
+  update(step: number, beaconAlive: boolean, beaconPhase?: string) {
     for (const L of this.lights) {
-      const st = this.decide(L.spec, step, beaconAlive)
+      const st = this.decide(L.spec, step, beaconAlive, beaconPhase)
       L.state = st
       this.decisions[L.spec.kind === 'ego' ? 'ego' : L.spec.dir] = st
       this.setLamps(L)
@@ -242,9 +248,9 @@ export class SignalOverlay {
   }
 
   // ---------- decision (arbiter) ----------
-  private decide(spec: LightSpec, step: number, beaconAlive: boolean): Decision {
+  private decide(spec: LightSpec, step: number, beaconAlive: boolean, beaconPhase?: string): Decision {
     const target = spec.kind === 'ego' && spec.lane != null ? { lane: spec.lane } : spec.dir
-    return arbitrate(this.data, target, step, beaconAlive)
+    return arbitrate(this.data, target, step, beaconAlive, beaconPhase)
   }
 
   // ---------- building ----------

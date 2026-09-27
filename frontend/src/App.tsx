@@ -76,7 +76,8 @@ function App() {
   const script = autoStage ? activeScene?.script : undefined
   const gridUp = script ? sceneTime < script.gridDownAt : manualStage.gridUp
   const beaconAlive = script ? sceneTime < script.beaconLostAt : manualStage.beaconAlive
-  const ego = sceneData ? egoDecision(sceneData, step, beaconAlive) : null
+  const beaconPhase = activeScene?.beaconPhase
+  const ego = sceneData ? egoDecision(sceneData, step, beaconAlive, beaconPhase) : null
   const stage = getStageInfo(gridUp, beaconAlive, ego?.source)
   const timelineStates = useMemo(() => {
     if (!sceneData) return []
@@ -342,8 +343,8 @@ function App() {
   }, [sceneData, activeScene])
 
   useEffect(() => {
-    overlayRef.current?.update(step, beaconAlive)
-  }, [sceneData, step, beaconAlive])
+    overlayRef.current?.update(step, beaconAlive, beaconPhase)
+  }, [sceneData, step, beaconAlive, beaconPhase])
 
   useEffect(() => {
     if (!threeRef.current || !sceneData) return

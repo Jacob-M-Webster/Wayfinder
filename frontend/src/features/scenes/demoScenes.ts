@@ -1,6 +1,6 @@
 import scene55Url from '../../../../demo_data/scene_55.json?url'
 import scene20s19Url from '../../../../demo_data/scene_20s_19.json?url'
-import scene20s2Url from '../../../../demo_data/scene_20s_2.json?url'
+import scene20s9_26Url from '../../../../demo_data/scene_20s_9_26.json?url'
 import scene20s8_9Url from '../../../../demo_data/scene_20s_8_9.json?url'
 
 export type StageScript = {
@@ -18,6 +18,9 @@ export type DemoScene = {
   script: StageScript
   // Show the signal overlay (what the car believes). Off for the plain "Normal" scene.
   overlay: boolean
+  // Fixed phase the beacon broadcasts for every light while alive. Unset: it replays the
+  // recorded light timeline.
+  beaconPhase?: string
 }
 
 export const demoScenes: DemoScene[] = [
@@ -36,10 +39,11 @@ export const demoScenes: DemoScene[] = [
     hotkey: '2',
     label: 'Scene B',
     title: 'Beacon guidance',
-    fileName: 'scene_20s_2.json',
-    url: scene20s2Url,
+    fileName: 'scene_20s_9_26.json',
+    url: scene20s9_26Url,
     script: { gridDownAt: 0, beaconLostAt: Infinity },
     overlay: true,
+    beaconPhase: 'STOP',
   },
   {
     key: 'C',
