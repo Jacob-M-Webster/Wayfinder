@@ -64,6 +64,8 @@ function App() {
   const [autoStage, setAutoStage] = useState(true)
   const [manualStage, setManualStage] = useState<StageFlags>({ gridUp: true, beaconAlive: true })
   const [loadDialogOpen, setLoadDialogOpen] = useState(false)
+  // Testing controls (guide, toolbar, timeline). Hidden for the demo; 8 toggles them.
+  const [testUiOpen, setTestUiOpen] = useState(false)
 
   const bounds = useMemo(() => (sceneData ? getBounds(sceneData) : null), [sceneData])
   const activeScene = demoScenes.find((scene) => scene.key === activeSceneKey) ?? null
@@ -116,7 +118,7 @@ function App() {
       setActiveSceneKey(sceneKey)
       setAutoStage(true)
       setStep(0)
-      setPlaying(false)
+      setPlaying(true)
       console.info(successMessage)
     } catch (error) {
       console.error(error instanceof Error ? error.message : 'Unable to load scene')
@@ -378,6 +380,14 @@ function App() {
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [loadDialogOpen])
 
+  const handlePlayPause = useCallback(() => {
+    if (!sceneData) return
+    if (!playing && step >= sceneData.num_steps - 1 && !loopPlayback) {
+      setStep(0)
+    }
+    setPlaying((value) => !value)
+  }, [loopPlayback, playing, sceneData, step])
+
   useEffect(() => {
     if (loadDialogOpen) return
     const onKey = (event: KeyboardEvent) => {
@@ -394,15 +404,16 @@ function App() {
       } else if (key === 'g') overrideStage({ gridUp: !gridUp })
       else if (key === 'b') overrideStage({ beaconAlive: !beaconAlive })
       else if (key === 'a') setAutoStage(true)
+      else if (key === '8') setTestUiOpen((value) => !value)
       else if (key === ' ') {
         event.preventDefault()
-        if (sceneData) setPlaying((value) => !value)
+        handlePlayPause()
       } else return
       ;(document.activeElement as HTMLElement | null)?.blur()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [beaconAlive, gridUp, loadDialogOpen, loadScene, overrideStage, sceneData])
+  }, [beaconAlive, gridUp, handlePlayPause, loadDialogOpen, loadScene, overrideStage])
 
   function handleFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -416,7 +427,7 @@ function App() {
         setSceneData(data)
         setActiveSceneKey(null)
         setStep(0)
-        setPlaying(false)
+        setPlaying(true)
         setLoadDialogOpen(false)
         console.info(`${file.name} loaded`)
       } catch {
@@ -439,12 +450,6 @@ function App() {
     void loadScene(scene.url, `${scene.fileName} loaded`, scene.key)
   }
 
-  function handlePlayPause() {
-    if (!playing && sceneData && step >= sceneData.num_steps - 1 && !loopPlayback) {
-      setStep(0)
-    }
-    setPlaying((value) => !value)
-  }
 
   const timeLabel = sceneData ? `${(step / sceneData.hz).toFixed(1)}s` : '0.0s'
   const totalTime = sceneData ? `${((sceneData.num_steps - 1) / sceneData.hz).toFixed(1)}s` : '0.0s'
@@ -460,26 +465,30 @@ function App() {
               <div className="app-logo" aria-label="SDC">
                 <img src={logoUrl} alt="SDC" />
               </div>
-              <ControlGuide open={controlGuideOpen} onToggle={() => setControlGuideOpen((value) => !value)} />
+              {testUiOpen && (
+                <ControlGuide open={controlGuideOpen} onToggle={() => setControlGuideOpen((value) => !value)} />
+              )}
             </div>
 
             <div className="top-right-stack">
-              <div className={`top-right-box ${topControlsOpen ? 'is-open' : 'is-collapsed'}`}>
-                <SceneToolbar
-                  activeSceneKey={activeSceneKey}
-                  cameraLocked={cameraLocked}
-                  demoScenes={demoScenes}
-                  sceneLoaded={Boolean(sceneData)}
-                  topControlsOpen={topControlsOpen}
-                  zoom={zoom}
-                  onChangeScene={handleDemoScene}
-                  onCameraLockChange={updateCameraLock}
-                  onOpenLoadDialog={() => setLoadDialogOpen(true)}
-                  onRecenter={recenterScene}
-                  onToggleTopControls={() => setTopControlsOpen((value) => !value)}
-                  onZoomChange={changeZoom}
-                />
-              </div>
+              {testUiOpen && (
+                <div className={`top-right-box ${topControlsOpen ? 'is-open' : 'is-collapsed'}`}>
+                  <SceneToolbar
+                    activeSceneKey={activeSceneKey}
+                    cameraLocked={cameraLocked}
+                    demoScenes={demoScenes}
+                    sceneLoaded={Boolean(sceneData)}
+                    topControlsOpen={topControlsOpen}
+                    zoom={zoom}
+                    onChangeScene={handleDemoScene}
+                    onCameraLockChange={updateCameraLock}
+                    onOpenLoadDialog={() => setLoadDialogOpen(true)}
+                    onRecenter={recenterScene}
+                    onToggleTopControls={() => setTopControlsOpen((value) => !value)}
+                    onZoomChange={changeZoom}
+                  />
+                </div>
+              )}
               {activeScene && (
                 <div className="top-status-box">
                   <StagePanel stage={stage} />
@@ -490,28 +499,30 @@ function App() {
 
           <AgentLegend />
 
-          <PlaybackControls
-            sceneLoaded={Boolean(sceneData)}
-            step={step}
-            maxStep={Math.max(0, (sceneData?.num_steps ?? 1) - 1)}
-            playing={playing}
-            loopPlayback={loopPlayback}
-            playbackSpeed={playbackSpeed}
-            speedPopoverOpen={speedPopoverOpen}
-            timeLabel={timeLabel}
-            totalTime={totalTime}
-            frameLabel={frameLabel}
-            timelineGradient={timelineGradient}
-            currentTimelineState={currentTimelineState}
-            onPlayPause={handlePlayPause}
-            onStepChange={(nextStep) => {
-              setPlaying(false)
-              setStep(nextStep)
-            }}
-            onLoopChange={setLoopPlayback}
-            onSpeedChange={setPlaybackSpeed}
-            onSpeedPopoverChange={setSpeedPopoverOpen}
-          />
+          {testUiOpen && (
+            <PlaybackControls
+              sceneLoaded={Boolean(sceneData)}
+              step={step}
+              maxStep={Math.max(0, (sceneData?.num_steps ?? 1) - 1)}
+              playing={playing}
+              loopPlayback={loopPlayback}
+              playbackSpeed={playbackSpeed}
+              speedPopoverOpen={speedPopoverOpen}
+              timeLabel={timeLabel}
+              totalTime={totalTime}
+              frameLabel={frameLabel}
+              timelineGradient={timelineGradient}
+              currentTimelineState={currentTimelineState}
+              onPlayPause={handlePlayPause}
+              onStepChange={(nextStep) => {
+                setPlaying(false)
+                setStep(nextStep)
+              }}
+              onLoopChange={setLoopPlayback}
+              onSpeedChange={setPlaybackSpeed}
+              onSpeedPopoverChange={setSpeedPopoverOpen}
+            />
+          )}
 
           {!sceneData && <LandingScreen />}
 
