@@ -579,7 +579,7 @@ input[type='range'] {
 .agent-legend.is-closed .legend-panel {
   width: fit-content;
   justify-items: center;
-  padding: 10px 13px 54px;
+  padding: 10px 25px 54px;
   overflow: visible;
 }
 
@@ -612,8 +612,9 @@ input[type='range'] {
 }
 
 .agent-legend.is-closed .legend-toggle {
-  inset-inline: 13px auto;
-  transform: none;
+  inset-inline-start: 50%;
+  inset-inline-end: auto;
+  transform: translateX(-50%);
 }
 
 .legend-toggle svg {
@@ -1293,6 +1294,12 @@ input[type='range'] {
   color: #e7edf6;
   font-size: clamp(16px, 2vw, 22px);
   font-weight: 800;
+}
+
+.landing-directions .hardware-status {
+  color: #aeb9c9;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .landing-demo-keys {
