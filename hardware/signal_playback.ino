@@ -1,3 +1,5 @@
+#include <cstdint>
+#include <Arduino.h>
 // Traffic light playback for scenario e63026fee22804f9 (intersection 0)
 // Press the button to play the scenario once.
 // Codes: 0 = UNKNOWN/NONE, 1 = STOP, 2 = CAUTION, 3 = GO
@@ -13,6 +15,7 @@ const int EW_yellow = 6;
 const int EW_green  = 5;
 // Start button (other leg to GND)
 const int BUTTON_PIN = 8;
+const int signal = 9;
 
 // ---------------- Scenario data ----------------
 enum Code : uint8_t { UNKNOWN = 0, STOP = 1, CAUTION = 2, GO = 3 };
@@ -140,6 +143,9 @@ void setup() {
   pinMode(EW_green, OUTPUT);
 
   pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(signal,OUTPUT);
+  delay(200); 
+                  
 
   Serial.begin(9600);
   allOff();
@@ -148,6 +154,10 @@ void setup() {
 
 void loop() {
   if (buttonPressed()) {
+    digitalWrite(signal, HIGH);  // 1. Turn on signal LED
+    delay(3000);                 // 2. Wait 3 seconds
+    digitalWrite(signal, LOW);
+
     startCycle();
   }
 
